@@ -649,26 +649,7 @@ app.get('/api/state', (req, res) => {
   res.json({ portfolio, topCoins, instruments, telegramConfig: { enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId } });
 });
 
-app.get('/api/debug', async (req, res) => {
-  const result = {};
-  try {
-    const tests = [
-      ['coinbase', 'https://api.coinbase.com/v2/prices/BTC-USD/spot'],
-      ['kraken', 'https://api.kraken.com/0/public/Ticker?pair=XBTUSDT'],
-      ['bitstamp', 'https://www.bitstamp.net/api/v2/ticker/btcusd/'],
-      ['binance', 'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT']
-    ];
-    for (const [name, url] of tests) {
-      try {
-        const r = await fetch(url);
-        result[name] = 'status=' + r.status;
-        if (r.status === 200) result[name + '_body'] = (await r.json().catch(() => '?')).toString().substring(0, 100);
-      } catch (e) { result[name] = e.message; }
-    }
-    result.fetchAllPrices = await fetchAllPrices();
-  } catch (e) { result.error = e.message; }
-  res.json(result);
-});
+
 
 app.post('/api/binance-config', (req, res) => {
   const { apiKey, apiSecret } = req.body;
