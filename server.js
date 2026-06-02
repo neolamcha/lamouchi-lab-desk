@@ -134,22 +134,12 @@ const COIN_MAP = {
 
 let topCoins = [];
 
+const ALL_COINS = ['BTC', 'ETH', 'BNB', 'XRP', 'SOL', 'ADA', 'DOGE', 'AVAX', 'DOT', 'LINK', 'PAXG', 'XLM', 'TRX', 'HYPE'];
+
 async function refreshTop10() {
-  try {
-    const res = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=25');
-    const data = await res.json();
-    const mapped = [];
-    for (const c of data) {
-      const ticker = COIN_MAP[c.id];
-      if (ticker && !mapped.includes(ticker)) mapped.push(ticker);
-    }
-    topCoins = mapped.slice(0, 10);
-    if (!topCoins.includes('PAXG')) topCoins.push('PAXG');
-    console.log('[TopCoins]', topCoins.join(', '));
-  } catch (e) {
-    console.warn('[TopCoins]', e.message);
-    if (!topCoins.length) topCoins = ['BTC', 'ETH', 'BNB', 'XRP', 'SOL', 'ADA', 'DOGE', 'AVAX', 'DOT', 'LINK', 'PAXG'];
-  }
+  // Use fixed list: all coins we support
+  topCoins = [...ALL_COINS];
+  console.log('[TopCoins]', topCoins.join(', '));
 }
 
 // ===== BINANCE DEMO API =====
