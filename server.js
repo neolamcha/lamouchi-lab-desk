@@ -61,23 +61,12 @@ async function fetchTradingView(coin) {
   } catch { return 'NEUTRAL'; }
 }
 
-const API_BASES = ['https://api.binance.com', DEMO_API];
-
-async function apiFetch(path) {
-  for (const base of API_BASES) {
-    try {
-      const res = await fetch(`${base}${path}`);
-      if (res.status === 200) return await res.json();
-    } catch (e) { console.warn(`[API ${base}]`, e.message); }
-  }
-  return null;
-}
-
 // 3. DOM — Order Book Depth Imbalance
 async function fetchDOMSignal(coin) {
   try {
-    const d = await apiFetch(`/api/v3/depth?symbol=${coin}USDT&limit=20`);
-    if (!d || !d.bids || !d.asks) return 'NEUTRAL';
+    const res = await fetch(`${DEMO_API}/api/v3/depth?symbol=${coin}USDT&limit=20`);
+    const d = await res.json();
+    if (!d.bids || !d.asks) return 'NEUTRAL';
     const bidVol = d.bids.reduce((a, b) => a + parseFloat(b[0]) * parseFloat(b[1]), 0);
     const askVol = d.asks.reduce((a, b) => a + parseFloat(b[0]) * parseFloat(b[1]), 0);
     if (bidVol === 0 || askVol === 0) return 'NEUTRAL';
@@ -91,8 +80,9 @@ async function fetchDOMSignal(coin) {
 // 4. Order Flow — Trade aggressor analysis
 async function fetchOrderFlowSignal(coin) {
   try {
-    const trades = await apiFetch(`/api/v3/trades?symbol=${coin}USDT&limit=100`);
-    if (!trades || !trades.length) return 'NEUTRAL';
+    const res = await fetch(`${DEMO_API}/api/v3/trades?symbol=${coin}USDT&limit=100`);
+    const trades = await res.json();
+    if (!trades.length) return 'NEUTRAL';
     const buyVol = trades.filter(t => !t.isBuyerMaker).reduce((a, t) => a + parseFloat(t.qty), 0);
     const sellVol = trades.filter(t => t.isBuyerMaker).reduce((a, t) => a + parseFloat(t.qty), 0);
     if (sellVol === 0) return buyVol > 0 ? 'BUY' : 'NEUTRAL';
@@ -106,8 +96,9 @@ async function fetchOrderFlowSignal(coin) {
 // 5. VWAP
 async function fetchVWAPSignal(coin) {
   try {
-    const klines = await apiFetch(`/api/v3/klines?symbol=${coin}USDT&interval=1h&limit=24`);
-    if (!klines || !klines.length) return 'NEUTRAL';
+    const res = await fetch(`${DEMO_API}/api/v3/klines?symbol=${coin}USDT&interval=1h&limit=24`);
+    const klines = await res.json();
+    if (!klines.length) return 'NEUTRAL';
     let volSum = 0, pvSum = 0;
     for (const k of klines) {
       const high = parseFloat(k[2]), low = parseFloat(k[3]), close = parseFloat(k[4]), vol = parseFloat(k[5]);
@@ -116,8 +107,8 @@ async function fetchVWAPSignal(coin) {
       pvSum += typPrice * vol;
     }
     const vwap = pvSum / volSum;
-    const priceJson = await apiFetch(`/api/v3/ticker/price?symbol=${coin}USDT`);
-    if (!priceJson) return 'NEUTRAL';
+    const priceRes = await fetch(`${DEMO_API}/api/v3/ticker/price?symbol=${coin}USDT`);
+    const priceJson = await priceRes.json();
     const price = parseFloat(priceJson.price);
     if (!price || !vwap) return 'NEUTRAL';
     const dev = (price - vwap) / vwap;
@@ -202,57 +193,30 @@ async function binanceRequest(endpoint, params = {}) {
   return JSON.parse(txt);
 }
 
-const CG_IDS = {
-  BTC: 'bitcoin', ETH: 'ethereum', BNB: 'binancecoin', XRP: 'ripple',
-  SOL: 'solana', TRX: 'tron', DOGE: 'dogecoin', ADA: 'cardano',
-  XLM: 'stellar', HYPE: 'hyperliquid', PAXG: 'pax-gold'
-};
-
-async function fetchPrice(coin) {
-  // Try Binance production API first
-  try {
-    const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${coin}USDT`);
-    if (res.status === 200) {
-      const json = await res.json();
-      const p = parseFloat(json.price);
-      if (!isNaN(p) && p > 0) return p;
-    }
-  } catch (e) { console.warn(`[Price ${coin}] Binance:`, e.message); }
-  // Fallback: CoinGecko
-  const cgId = CG_IDS[coin];
-  if (cgId) {
-    try {
-      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cgId}&vs_currencies=usd`);
-      if (res.status === 200) {
-        const json = await res.json();
-        const p = parseFloat(json[cgId]?.usd);
-        if (!isNaN(p) && p > 0) return p;
-      }
-    } catch (e) { console.warn(`[Price ${coin}] CoinGecko:`, e.message); }
-  }
-  console.warn(`[Price ${coin}] All sources failed`);
-  return null;
-}
+ async function fetchPrice(coin) {
+   const urls = [
+     `https://api.binance.com/api/v3/ticker/price?symbol=${coin}USDT`,
+     `${DEMO_API}/api/v3/ticker/price?symbol=${coin}USDT`
+   ];
+   for (const url of urls) {
+     try {
+       const res = await fetch(url);
+       if (res.status !== 200) continue;
+       const json = await res.json();
+       const p = parseFloat(json.price);
+       if (!isNaN(p) && p > 0) return p;
+     } catch {}
+   }
+   return null;
+ }
 
 async function demoBalance() {
   if (!demoApiKey || !demoApiSecret) return null;
-  // Try demo first, then production for account data
-  for (const base of API_BASES) {
-    try {
-      const ts = Date.now();
-      const crypto = require('crypto');
-      const qs = 'timestamp=' + ts + '&recvWindow=10000';
-      const sig = crypto.createHmac('sha256', demoApiSecret).update(qs).digest('hex');
-      const res = await fetch(`${base}/api/v3/account?${qs}&signature=${sig}`, {
-        headers: { 'X-MBX-APIKEY': demoApiKey }
-      });
-      if (res.status !== 200) continue;
-      const data = await res.json();
-      const usdt = data.balances?.find(b => b.asset === 'USDT');
-      if (usdt) return parseFloat(usdt.free) || 0;
-    } catch {}
-  }
-  return null;
+  try {
+    const data = await binanceRequest('/api/v3/account');
+    const usdt = data.balances?.find(b => b.asset === 'USDT');
+    return usdt ? parseFloat(usdt.free) : 0;
+  } catch { return null; }
 }
 
 // ===== STATE =====
@@ -591,25 +555,6 @@ async function init() {
 init();
 
 // ===== API =====
-app.get('/api/debug', async (req, res) => {
-  const results = {};
-  for (const base of ['https://api.binance.com', DEMO_API, 'https://api.coingecko.com']) {
-    try {
-      const start = Date.now();
-      const r = await fetch(base + '/api/v3/ticker/price?symbol=BTCUSDT');
-      results[base] = { status: r.status, ms: Date.now() - start };
-    } catch (e) { results[base] = { error: e.message }; }
-  }
-  // Test CoinGecko
-  try {
-    const start = Date.now();
-    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
-    const j = await r.json();
-    results['coingecko'] = { status: r.status, ms: Date.now() - start, price: j.bitcoin?.usd };
-  } catch (e) { results['coingecko'] = { error: e.message }; }
-  res.json(results);
-});
-
 app.get('/api/state', (req, res) => {
   res.json({ portfolio, topCoins, instruments, telegramConfig: { enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId } });
 });
