@@ -11,7 +11,6 @@
 </head>
 <body>
   <canvas id="particle-canvas"></canvas>
-
   <div class="scanline-overlay"></div>
 
   <div class="container">
@@ -21,7 +20,7 @@
           <div class="brand-icon">◈</div>
           <div class="brand-text">
             <h1>LAMOUCHI LAB</h1>
-            <span class="brand-sub">DESK</span>
+            <span class="brand-sub">DESK · CHEF-D'OEUVRE</span>
           </div>
         </div>
         <div class="header-status">
@@ -46,26 +45,26 @@
         <form id="config-form" data-instrument="MNQ" class="config-form">
           <div class="control-group">
             <label class="ctrl-label">WEBHOOK</label>
-            <input type="url" name="webhookUrl" class="ctrl-input" placeholder="https://..." />
+            <input type="url" name="webhookUrl" class="ctrl-input" placeholder="https://..." style="min-width:160px" />
           </div>
           <div class="control-group">
-            <label class="ctrl-label">SL (TICKS)</label>
-            <input type="number" name="stopLossTicks" class="ctrl-input" min="10" value="80" />
+            <label class="ctrl-label">SL MULT (ATR)</label>
+            <input type="number" name="atrMultiplierSL" class="ctrl-input" min="0.5" max="5" step="0.1" value="1.5" style="min-width:70px" />
           </div>
           <div class="control-group">
-            <label class="ctrl-label">TP (TICKS)</label>
-            <input type="number" name="takeProfitTicks" class="ctrl-input" min="10" value="160" />
+            <label class="ctrl-label">TP MULT (ATR)</label>
+            <input type="number" name="atrMultiplierTP" class="ctrl-input" min="1" max="10" step="0.1" value="3.0" style="min-width:70px" />
           </div>
           <div class="control-group">
             <label class="ctrl-label">MODE</label>
             <select name="mode" class="ctrl-select">
-              <option value="simulation" selected>SIMULATION</option>
+              <option value="simulation" selected>AUTO (TA)</option>
               <option value="manual">MANUEL</option>
             </select>
           </div>
           <div class="control-group">
             <label class="ctrl-label">OFFSET</label>
-            <input type="number" step="0.01" name="calibrationOffset" class="ctrl-input" placeholder="0" />
+            <input type="number" step="0.01" name="calibrationOffset" class="ctrl-input" placeholder="0" style="min-width:70px" />
           </div>
           <button type="submit" class="ctrl-btn">APPLIQUER</button>
         </form>
@@ -91,7 +90,7 @@
           <input type="email" name="emailFrom" class="ctrl-input" placeholder="votre@gmail.com" />
         </div>
         <div class="control-group">
-          <label class="ctrl-label">MOT DE PASSE (APP PASSWORD)</label>
+          <label class="ctrl-label">MOT DE PASSE</label>
           <input type="password" name="emailPassword" class="ctrl-input" placeholder="xxxx xxxx xxxx xxxx" />
         </div>
         <button type="submit" class="ctrl-btn" style="background:linear-gradient(135deg,rgba(255,215,0,0.15),rgba(255,215,0,0.15));border-color:rgba(255,215,0,0.4);color:#ffd700;">SAUVEGARDER</button>
@@ -100,221 +99,13 @@
       <div id="email-status" class="email-status"></div>
     </div>
 
-    <section class="grid-dashboard">
-      <!-- MNQ Card -->
-      <article class="instrument-card" id="card-MNQ">
-        <div class="card-header">
-          <h2><span class="ticker">MNQ</span> <span class="inst-name">NASDAQ</span></h2>
-          <span class="card-badge">FUTURES</span>
-        </div>
-        <div class="card-body">
-          <div class="price-section">
-            <div class="price-main">
-              <span class="price-label">PRIX LIVE</span>
-              <span id="price-MNQ" class="price-value">--</span>
-              <span id="topstep-ref-MNQ" class="topstep-ref"></span>
-            </div>
-            <div class="confluence-section">
-              <span class="price-label">CONFLUENCE</span>
-              <span id="confluence-MNQ" class="confluence-badge neutral">NEUTRAL</span>
-            </div>
-          </div>
-          <div class="sparkline-container">
-            <canvas id="spark-MNQ" class="sparkline-canvas" width="300" height="60"></canvas>
-          </div>
-          <div class="sources-section">
-            <div class="sources-header">
-              <span class="price-label">SOURCES DE SIGNAL</span>
-              <span class="sources-count" id="count-MNQ">0/5 BUY</span>
-            </div>
-            <div class="sources-grid">
-              <div class="source-item" id="src-investing-MNQ">
-                <span class="src-name">Investing.com</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-              <div class="source-item" id="src-tradingview-MNQ">
-                <span class="src-name">TradingView</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-              <div class="source-item" id="src-strategy-MNQ">
-                <span class="src-name">Stratégie Pro</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-              <div class="source-item" id="src-extra-MNQ">
-                <span class="src-name">Refinitiv</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-              <div class="source-item" id="src-alphavantage-MNQ">
-                <span class="src-name">Alpha Vantage</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-            </div>
-          </div>
-          <div class="history-section">
-            <div class="history-header">
-              <span class="price-label">HISTORIQUE</span>
-            </div>
-            <div class="history-scroll">
-              <table class="history-table" id="history-MNQ">
-                <thead>
-                  <tr><th>HEURE</th><th>DIR</th><th>ENTRÉE</th><th>SL</th><th>TP</th><th>WEBHOOK</th></tr>
-                </thead>
-                <tbody></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </article>
-
-      <!-- BTCM Card -->
-      <article class="instrument-card" id="card-BTCM">
-        <div class="card-header">
-          <h2><span class="ticker">BTCM</span> <span class="inst-name">BITCOIN</span></h2>
-          <span class="card-badge">FUTURES</span>
-        </div>
-        <div class="card-body">
-          <div class="price-section">
-            <div class="price-main">
-              <span class="price-label">PRIX LIVE</span>
-              <span id="price-BTCM" class="price-value">--</span>
-              <span id="topstep-ref-BTCM" class="topstep-ref"></span>
-            </div>
-            <div class="confluence-section">
-              <span class="price-label">CONFLUENCE</span>
-              <span id="confluence-BTCM" class="confluence-badge neutral">NEUTRAL</span>
-            </div>
-          </div>
-          <div class="sparkline-container">
-            <canvas id="spark-BTCM" class="sparkline-canvas" width="300" height="60"></canvas>
-          </div>
-          <div class="sources-section">
-            <div class="sources-header">
-              <span class="price-label">SOURCES DE SIGNAL</span>
-              <span class="sources-count" id="count-BTCM">0/5 BUY</span>
-            </div>
-            <div class="sources-grid">
-              <div class="source-item" id="src-investing-BTCM">
-                <span class="src-name">Investing.com</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-              <div class="source-item" id="src-tradingview-BTCM">
-                <span class="src-name">TradingView</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-              <div class="source-item" id="src-strategy-BTCM">
-                <span class="src-name">Stratégie Pro</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-              <div class="source-item" id="src-extra-BTCM">
-                <span class="src-name">Refinitiv</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-              <div class="source-item" id="src-alphavantage-BTCM">
-                <span class="src-name">Alpha Vantage</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-            </div>
-          </div>
-          <div class="history-section">
-            <div class="history-header">
-              <span class="price-label">HISTORIQUE</span>
-            </div>
-            <div class="history-scroll">
-              <table class="history-table" id="history-BTCM">
-                <thead>
-                  <tr><th>HEURE</th><th>DIR</th><th>ENTRÉE</th><th>SL</th><th>TP</th><th>WEBHOOK</th></tr>
-                </thead>
-                <tbody></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </article>
-
-      <!-- GCM Card -->
-      <article class="instrument-card" id="card-GCM">
-        <div class="card-header">
-          <h2><span class="ticker">GCM</span> <span class="inst-name">GOLD</span></h2>
-          <span class="card-badge">FUTURES</span>
-        </div>
-        <div class="card-body">
-          <div class="price-section">
-            <div class="price-main">
-              <span class="price-label">PRIX LIVE</span>
-              <span id="price-GCM" class="price-value">--</span>
-              <span id="topstep-ref-GCM" class="topstep-ref"></span>
-            </div>
-            <div class="confluence-section">
-              <span class="price-label">CONFLUENCE</span>
-              <span id="confluence-GCM" class="confluence-badge neutral">NEUTRAL</span>
-            </div>
-          </div>
-          <div class="sparkline-container">
-            <canvas id="spark-GCM" class="sparkline-canvas" width="300" height="60"></canvas>
-          </div>
-          <div class="sources-section">
-            <div class="sources-header">
-              <span class="price-label">SOURCES DE SIGNAL</span>
-              <span class="sources-count" id="count-GCM">0/5 BUY</span>
-            </div>
-            <div class="sources-grid">
-              <div class="source-item" id="src-investing-GCM">
-                <span class="src-name">Investing.com</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-              <div class="source-item" id="src-tradingview-GCM">
-                <span class="src-name">TradingView</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-              <div class="source-item" id="src-strategy-GCM">
-                <span class="src-name">Stratégie Pro</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-              <div class="source-item" id="src-extra-GCM">
-                <span class="src-name">Refinitiv</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-              <div class="source-item" id="src-alphavantage-GCM">
-                <span class="src-name">Alpha Vantage</span>
-                <span class="src-indicator neutral"></span>
-                <span class="src-value neutral">NEUTRAL</span>
-              </div>
-            </div>
-          </div>
-          <div class="history-section">
-            <div class="history-header">
-              <span class="price-label">HISTORIQUE</span>
-            </div>
-            <div class="history-scroll">
-              <table class="history-table" id="history-GCM">
-                <thead>
-                  <tr><th>HEURE</th><th>DIR</th><th>ENTRÉE</th><th>SL</th><th>TP</th><th>WEBHOOK</th></tr>
-                </thead>
-                <tbody></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </article>
+    <section class="grid-dashboard" id="dashboard">
+      <!-- Cards are generated by JS -->
     </section>
 
     <footer class="footer">
       <span class="footer-left">◈ LAMOUCHI LAB DESK</span>
-      <span class="footer-right">CONFLUENCE MULTI-SOURCES • ALERTES EMAIL</span>
+      <span class="footer-right">INVESTING.COM + TOPSTEP + FEAR &amp; GREED + COINGECKO · ATR SL/TP · CONFLUENCE</span>
     </footer>
   </div>
 
