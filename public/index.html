@@ -68,35 +68,36 @@
           </div>
           <button type="submit" class="ctrl-btn">APPLIQUER</button>
         </form>
-        <button id="email-toggle-btn" class="ctrl-btn email-btn" style="background:linear-gradient(135deg,rgba(255,215,0,0.1),rgba(255,215,0,0.05));border-color:rgba(255,215,0,0.3);color:#ffd700;">⚙ EMAIL</button>
+        <button id="telegram-toggle-btn" class="ctrl-btn email-btn" style="background:linear-gradient(135deg,rgba(0,136,204,0.1),rgba(0,136,204,0.05));border-color:rgba(0,136,204,0.3);color:#0088cc;">⚙ TELEGRAM</button>
       </div>
     </header>
 
-    <div id="email-panel" class="email-panel" style="display:none;">
-      <form id="email-form" class="email-form">
+    <div id="telegram-panel" class="email-panel" style="display:none;">
+      <form id="telegram-form" class="email-form">
         <div class="control-group">
           <label class="ctrl-label">ACTIVER LES ALERTES</label>
-          <select name="emailEnabled" class="ctrl-select">
+          <select name="telegramEnabled" class="ctrl-select">
             <option value="false">DÉSACTIVÉ</option>
             <option value="true">ACTIVÉ</option>
           </select>
         </div>
         <div class="control-group">
-          <label class="ctrl-label">EMAIL DESTINATAIRE</label>
-          <input type="email" name="emailTo" class="ctrl-input" value="selim.uchiha1892@gmail.com" />
+          <label class="ctrl-label">BOT TOKEN</label>
+          <input type="text" name="botToken" class="ctrl-input" placeholder="123456:ABCdef..." style="min-width:250px" />
         </div>
         <div class="control-group">
-          <label class="ctrl-label">EMAIL EXPÉDITEUR</label>
-          <input type="email" name="emailFrom" class="ctrl-input" placeholder="votre@gmail.com" />
+          <label class="ctrl-label">CHAT ID</label>
+          <input type="text" name="chatId" class="ctrl-input" placeholder="-1001234567890" style="min-width:150px" />
         </div>
-        <div class="control-group">
-          <label class="ctrl-label">MOT DE PASSE</label>
-          <input type="password" name="emailPassword" class="ctrl-input" placeholder="xxxx xxxx xxxx xxxx" />
-        </div>
-        <button type="submit" class="ctrl-btn" style="background:linear-gradient(135deg,rgba(255,215,0,0.15),rgba(255,215,0,0.15));border-color:rgba(255,215,0,0.4);color:#ffd700;">SAUVEGARDER</button>
-        <button id="test-email-btn" type="button" class="ctrl-btn" style="color:var(--text-muted);border-color:rgba(255,255,255,0.1);">TESTER L'ENVOI</button>
+        <p style="color:#6b7280;font-size:11px;margin:4px 0;">
+          1. Créez un bot via @BotFather sur Telegram → obtenez le token<br/>
+          2. Démarrez votre bot avec /start<br/>
+          3. Obtenez votre Chat ID via @userinfobot
+        </p>
+        <button type="submit" class="ctrl-btn" style="background:linear-gradient(135deg,rgba(0,136,204,0.15),rgba(0,136,204,0.15));border-color:rgba(0,136,204,0.4);color:#0088cc;">SAUVEGARDER</button>
+        <button id="test-telegram-btn" type="button" class="ctrl-btn" style="color:var(--text-muted);border-color:rgba(255,255,255,0.1);">TESTER L'ENVOI</button>
       </form>
-      <div id="email-status" class="email-status"></div>
+      <div id="telegram-status" class="email-status"></div>
     </div>
 
     <section class="grid-dashboard" id="dashboard">

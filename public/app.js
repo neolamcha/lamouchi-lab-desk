@@ -177,9 +177,9 @@ eventSource.onmessage = function(e) {
     const insts = data.instruments;
     if (!insts) return;
 
-    if (data.emailConfig && data.emailConfig.enabled) {
-      const btn = document.getElementById('email-toggle-btn');
-      if (btn) btn.textContent = '✅ EMAIL';
+    if (data.telegramConfig && data.telegramConfig.enabled) {
+      const btn = document.getElementById('telegram-toggle-btn');
+      if (btn) btn.textContent = '✅ TELEGRAM';
     }
 
     Object.entries(insts).forEach(function([key, inst]) {
@@ -464,47 +464,55 @@ if (configForm) {
   });
 }
 
-// ========== EMAIL ==========
-const emailToggleBtn = document.getElementById('email-toggle-btn');
-const emailPanel = document.getElementById('email-panel');
-if (emailToggleBtn && emailPanel) {
-  emailToggleBtn.addEventListener('click', function() {
-    emailPanel.style.display = emailPanel.style.display === 'none' ? 'block' : 'none';
+// ========== TELEGRAM ==========
+const telegramToggleBtn = document.getElementById('telegram-toggle-btn');
+const telegramPanel = document.getElementById('telegram-panel');
+if (telegramToggleBtn && telegramPanel) {
+  telegramToggleBtn.addEventListener('click', function() {
+    telegramPanel.style.display = telegramPanel.style.display === 'none' ? 'block' : 'none';
   });
 }
 
-const emailForm = document.getElementById('email-form');
-if (emailForm) {
-  emailForm.addEventListener('submit', function(e) {
+const telegramForm = document.getElementById('telegram-form');
+if (telegramForm) {
+  telegramForm.addEventListener('submit', function(e) {
     e.preventDefault();
-    const payload = { enabled: emailForm.emailEnabled.value === 'true', to: emailForm.emailTo.value, from: emailForm.emailFrom.value, password: emailForm.emailPassword.value };
-    fetch('/api/email-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+    const payload = { botToken: telegramForm.botToken.value, chatId: telegramForm.chatId.value, enabled: telegramForm.telegramEnabled.value === 'true' };
+    fetch('/api/telegram-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        const status = document.getElementById('email-status');
-        if (status) { status.textContent = '✅ Sauvegardée' + (payload.enabled ? ' — Alertes actives' : ''); status.className = 'email-status success'; }
-        emailForm.emailPassword.value = '';
+        const status = document.getElementById('telegram-status');
+        if (status) { status.textContent = payload.enabled ? '✅ Sauvegardé — Alertes actives' : 'ℹ️ Sauvegardé — Désactivé'; status.className = 'telegram-status success'; }
+        telegramForm.botToken.value = '';
       }).catch(function(err) {
-        const status = document.getElementById('email-status');
-        if (status) { status.textContent = '❌ ' + err.message; status.className = 'email-status error'; }
+        const status = document.getElementById('telegram-status');
+        if (status) { status.textContent = '❌ ' + err.message; status.className = 'telegram-status error'; }
       });
   });
 }
 
-const testEmailBtn = document.getElementById('test-email-btn');
-if (testEmailBtn) {
-  testEmailBtn.addEventListener('click', function() {
-    const status = document.getElementById('email-status');
-    if (status) { status.textContent = '📨 Envoi...'; status.className = 'email-status'; }
-    fetch('/api/test-email', { method: 'POST' })
+const testTelegramBtn = document.getElementById('test-telegram-btn');
+if (testTelegramBtn) {
+  testTelegramBtn.addEventListener('click', function() {
+    const status = document.getElementById('telegram-status');
+    if (status) { status.textContent = '📨 Envoi...'; status.className = 'telegram-status'; }
+    fetch('/api/test-telegram', { method: 'POST' })
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        if (status) { status.textContent = d.success ? '✅ ' + d.message : '❌ ' + d.error; status.className = d.success ? 'email-status success' : 'email-status error'; }
+        if (status) { status.textContent = d.success ? '✅ ' + d.message : '❌ ' + d.error; status.className = d.success ? 'telegram-status success' : 'telegram-status error'; }
       }).catch(function(err) {
-        if (status) { status.textContent = '❌ ' + err.message; status.className = 'email-status error'; }
+        if (status) { status.textContent = '❌ ' + err.message; status.className = 'telegram-status error'; }
       });
   });
 }
+
+// Load Telegram config on startup
+fetch('/api/telegram-config').then(function(r) { return r.json(); }).then(function(d) {
+  if (d.hasBotToken && d.hasChatId) {
+    const btn = document.getElementById('telegram-toggle-btn');
+    if (btn) btn.textContent = d.enabled ? '✅ TELEGRAM' : '⚙ TELEGRAM';
+  }
+});
 
 // ========== RESET ANALYTICS ==========
 function resetAnalytics(key) {

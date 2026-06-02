@@ -1,6 +1,5 @@
 const express = require('express');
 const path = require('path');
-const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -222,13 +221,10 @@ let appState = {
 
 let clients = [];
 
-let emailConfig = {
-  enabled: process.env.EMAIL_ENABLED === 'true' || true,
-  to: process.env.EMAIL_TO || 'selim.uchiha1892@gmail.com',
-  from: process.env.EMAIL_FROM || 'selim.uchiha1892@gmail.com',
-  password: process.env.EMAIL_PASS || '',
-  smtpHost: process.env.SMTP_HOST || 'smtp.gmail.com',
-  smtpPort: parseInt(process.env.SMTP_PORT || '587')
+let telegramConfig = {
+  enabled: !!process.env.TELEGRAM_BOT_TOKEN,
+  botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  chatId: process.env.TELEGRAM_CHAT_ID || ''
 };
 
 // ===== REAL SOURCE POLLING =====
@@ -314,7 +310,7 @@ function calcPositionSize(inst, entryPrice, stopLoss) {
 function broadcastState() {
   const data = JSON.stringify({
     instruments: appState.instruments,
-    emailConfig: { enabled: emailConfig.enabled, to: emailConfig.to, from: emailConfig.from, hasPassword: !!emailConfig.password }
+    telegramConfig: { enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId }
   });
   clients.forEach(client => client.write(`data: ${data}\n\n`));
 }
@@ -452,61 +448,56 @@ async function triggerSignal(instrKey, direction) {
   inst.history.unshift(signalEvent);
   if (inst.history.length > 200) inst.history.pop();
 
-  // Email
-  if (emailConfig.enabled && emailConfig.password) {
+  // Telegram
+  if (telegramConfig.enabled && telegramConfig.botToken && telegramConfig.chatId) {
     try {
-      await sendSignalEmail(signalEvent, instrKey, inst);
+      await sendTelegramAlert(signalEvent, instrKey, inst);
     } catch (err) {
-      console.error('[Email Error]', err.message);
+      console.error('[Telegram Error]', err.message);
     }
   }
 
   broadcastState();
 }
 
-// ===== EMAIL =====
-async function sendSignalEmail(signal, instrKey, inst) {
-  const transporter = nodemailer.createTransport({
-    host: emailConfig.smtpHost,
-    port: emailConfig.smtpPort,
-    secure: false,
-    auth: { user: emailConfig.from, pass: emailConfig.password }
-  });
-
+// ===== TELEGRAM =====
+async function sendTelegramAlert(signal, instrKey, inst) {
+  if (!telegramConfig.botToken || !telegramConfig.chatId) return;
   const instrName = { MNQ: 'NASDAQ (MNQ)', BTCM: 'BITCOIN (BTCM)', GCM: 'GOLD (GCM)' }[instrKey] || instrKey;
   const emoji = signal.direction === 'BUY' ? '🟢' : '🔴';
   const date = new Date(signal.timestamp).toLocaleString('fr-FR');
   const riskAmt = (inst.settings.accountBalance * inst.settings.riskPercent / 100).toFixed(2);
 
-  const html = `
-    <div style="font-family:'Inter',sans-serif;background:#0a0e1a;padding:24px;border-radius:12px;">
-      <div style="border-bottom:2px solid #00f0ff;padding-bottom:12px;margin-bottom:20px;">
-        <h1 style="color:#00f0ff;margin:0;font-size:22px;letter-spacing:2px;">⚡ LAMOUCHI LAB DESK</h1>
-        <p style="color:#6b7280;margin:4px 0 0;font-size:12px;">ALERTE CONFLUENCE · ${date}</p>
-      </div>
-      <div style="text-align:center;padding:20px;background:rgba(0,240,255,0.05);border-radius:8px;margin-bottom:20px;">
-        <span style="font-size:48px;">${emoji}</span>
-        <h2 style="color:${signal.direction === 'BUY' ? '#00ff88' : '#ff3355'};font-size:28px;margin:8px 0;">${signal.direction}</h2>
-        <p style="color:#e8e8f0;font-size:14px;margin:0;">${instrName}</p>
-        <p style="color:#6b7280;font-size:12px;margin:4px 0 0;">${inst.regime.regime} · ${inst.regime.direction} · Score: ${signal.confluenceScore}</p>
-      </div>
-      <table style="width:100%;border-collapse:collapse;font-size:14px;">
-        <tr><td style="padding:10px;color:#6b7280;border-bottom:1px solid #1a1f2e;">ENTRÉE</td><td style="padding:10px;color:#e8e8f0;font-weight:700;font-size:18px;text-align:right;border-bottom:1px solid #1a1f2e;">${signal.entryPrice}</td></tr>
-        <tr><td style="padding:10px;color:#6b7280;border-bottom:1px solid #1a1f2e;">STOP LOSS</td><td style="padding:10px;color:#ff3355;font-weight:600;text-align:right;border-bottom:1px solid #1a1f2e;">${signal.stopLoss}</td></tr>
-        <tr><td style="padding:10px;color:#6b7280;border-bottom:1px solid #1a1f2e;">TAKE PROFIT</td><td style="padding:10px;color:#00ff88;font-weight:600;text-align:right;border-bottom:1px solid #1a1f2e;">${signal.takeProfit}</td></tr>
-        <tr><td style="padding:10px;color:#6b7280;border-bottom:1px solid #1a1f2e;">QUANTITÉ</td><td style="padding:10px;color:#e8e8f0;font-weight:600;text-align:right;border-bottom:1px solid #1a1f2e;">${signal.quantity}</td></tr>
-        <tr><td style="padding:10px;color:#6b7280;">RISQUE</td><td style="padding:10px;color:#ffd700;font-weight:600;text-align:right;">$${riskAmt} (${inst.settings.riskPercent}%)</td></tr>
-      </table>
-      <p style="color:#3a3f52;font-size:10px;margin-top:20px;text-align:center;">Lamouchi Lab Desk · Investing.com+Topstep+Fear&amp;Greed+CoinGecko · ATR SL/TP · Risk</p>
-    </div>`;
+  const text = [
+    `${emoji} *LAMOUCHI LAB DESK*`,
+    `*Signal:* ${signal.direction} · ${instrName}`,
+    `*Entrée:* ${signal.entryPrice}  |  *Score:* ${signal.confluenceScore}`,
+    `*SL:* ${signal.stopLoss}  |  *TP:* ${signal.takeProfit}`,
+    `*Qté:* ${signal.quantity}  |  *Risque:* \$${riskAmt}`,
+    `*Régime:* ${inst.regime.regime} / ${inst.regime.direction}`,
+    `🕐 ${date}`
+  ].join('\n');
 
-  const info = await transporter.sendMail({
-    from: '"Lamouchi Lab Desk" <' + emailConfig.from + '>',
-    to: emailConfig.to,
-    subject: `${emoji} SIGNAL ${signal.direction} · ${instrName} @ ${signal.entryPrice}`,
-    html
-  });
-  console.log(`[Email] Signal envoyé (${info.messageId})`);
+  try {
+    const url = `https://api.telegram.org/bot${telegramConfig.botToken}/sendMessage`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: telegramConfig.chatId,
+        text: text,
+        parse_mode: 'Markdown'
+      })
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error('[Telegram] API error:', res.status, errBody);
+    } else {
+      console.log(`[Telegram] Alert sent to ${telegramConfig.chatId}`);
+    }
+  } catch (err) {
+    console.error('[Telegram] Error:', err.message);
+  }
 }
 
 // ===== PRICE FETCHING =====
@@ -762,35 +753,50 @@ app.post('/api/webhook/source', (req, res) => {
   res.json({ success: true, source, signal, confluence: appState.instruments[instKey].confluence });
 });
 
-app.get('/api/email-config', (req, res) => {
-  res.json({ enabled: emailConfig.enabled, to: emailConfig.to, from: emailConfig.from, hasPassword: !!emailConfig.password });
+app.get('/api/telegram-config', (req, res) => {
+  res.json({
+    enabled: telegramConfig.enabled,
+    botToken: telegramConfig.botToken ? telegramConfig.botToken.substring(0, 6) + '...' : '',
+    chatId: telegramConfig.chatId || '',
+    hasBotToken: !!telegramConfig.botToken,
+    hasChatId: !!telegramConfig.chatId
+  });
 });
 
-app.post('/api/email-config', (req, res) => {
-  const { enabled, to, from, password } = req.body;
-  if (enabled !== undefined) emailConfig.enabled = enabled;
-  if (to !== undefined) emailConfig.to = to;
-  if (from !== undefined) emailConfig.from = from;
-  if (password !== undefined) emailConfig.password = password;
-  res.json({ success: true, enabled: emailConfig.enabled, to: emailConfig.to, from: emailConfig.from, hasPassword: !!emailConfig.password });
+app.post('/api/telegram-config', (req, res) => {
+  const { enabled, botToken, chatId } = req.body;
+  if (enabled !== undefined) telegramConfig.enabled = enabled;
+  if (botToken !== undefined) telegramConfig.botToken = botToken;
+  if (chatId !== undefined) telegramConfig.chatId = chatId;
+  res.json({
+    success: true,
+    enabled: telegramConfig.enabled,
+    hasBotToken: !!telegramConfig.botToken,
+    hasChatId: !!telegramConfig.chatId
+  });
 });
 
-app.post('/api/test-email', async (req, res) => {
-  if (!emailConfig.password) return res.status(400).json({ error: 'Mot de passe email manquant' });
+app.post('/api/test-telegram', async (req, res) => {
+  if (!telegramConfig.botToken || !telegramConfig.chatId) {
+    return res.status(400).json({ error: 'Bot token ou Chat ID manquant' });
+  }
   try {
-    const transporter = nodemailer.createTransport({
-      host: emailConfig.smtpHost,
-      port: emailConfig.smtpPort,
-      secure: false,
-      auth: { user: emailConfig.from, pass: emailConfig.password }
+    const url = `https://api.telegram.org/bot${telegramConfig.botToken}/sendMessage`;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: telegramConfig.chatId,
+        text: '✅ *Lamouchi Lab Desk* — Test réussi !\nLes alertes Telegram fonctionnent correctement.',
+        parse_mode: 'Markdown'
+      })
     });
-    await transporter.sendMail({
-      from: '"Lamouchi Lab Desk" <' + emailConfig.from + '>',
-      to: emailConfig.to,
-      subject: '✅ TEST · Lamouchi Lab Desk',
-      html: '<div style="background:#0a0e1a;padding:24px;border-radius:12px;"><h1 style="color:#00f0ff;">✅ Test réussi</h1><p style="color:#e8e8f0;">Les alertes confluence fonctionnent !</p></div>'
-    });
-    res.json({ success: true, message: 'Email de test envoyé à ' + emailConfig.to });
+    if (r.ok) {
+      res.json({ success: true, message: 'Message Telegram envoyé !' });
+    } else {
+      const err = await r.text();
+      res.status(400).json({ error: 'Telegram API: ' + err.substring(0, 200) });
+    }
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -803,7 +809,7 @@ app.get('/api/events', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
-  const state = { instruments: appState.instruments, emailConfig: { enabled: emailConfig.enabled, to: emailConfig.to, from: emailConfig.from, hasPassword: !!emailConfig.password } };
+  const state = { instruments: appState.instruments, telegramConfig: { enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId } };
   res.write(`data: ${JSON.stringify(state)}\n\n`);
   clients.push(res);
   req.on('close', () => {
@@ -816,6 +822,6 @@ app.listen(PORT, () => {
   console.log(`   LAMOUCHI LAB DESK - Chef-d'oeuvre`);
   console.log(`   http://localhost:${PORT}`);
   console.log(`   Signaux: Investing.com + Topstep + Fear & Greed + CoinGecko`);
-  console.log(`   SL/TP: ATR dynamique | Divergence: Auto | P&L: Auto`);
+  console.log(`   Notifications: Telegram | SL/TP: ATR dynamique | P&L: Auto`);
   console.log(`================================================================`);
 });
