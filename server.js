@@ -172,12 +172,72 @@ async function fetchCoinGeckoSignal(instrument) {
   }
 }
 
+// 5. TradingView Technical Summary
+const TRADINGVIEW_SYMBOLS = {
+  MNQ: 'nasdaq100',
+  GCM: 'gold',
+  BTCM: 'bitcoin'
+};
+
+async function fetchTradingViewSignal(instrument) {
+  const symbol = TRADINGVIEW_SYMBOLS[instrument];
+  if (!symbol) return 'NEUTRAL';
+  try {
+    const url = `https://www.tradingview.com/symbols/${symbol}/technicals/`;
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' }
+    });
+    const html = await res.text();
+    const recMatch = html.match(/"RECOMMENDATION":"(BUY|SELL|NEUTRAL)"/);
+    if (recMatch) return recMatch[1];
+    const buyMatch = html.match(/strong.?buy/i);
+    const sellMatch = html.match(/strong.?sell/i);
+    if (buyMatch && !sellMatch) return 'BUY';
+    if (sellMatch && !buyMatch) return 'SELL';
+    return 'NEUTRAL';
+  } catch (err) {
+    console.warn(`[TradingView ${instrument}]`, err.message);
+    return 'NEUTRAL';
+  }
+}
+
+// 6. Binance BTC Long/Short Ratio
+let lastBtclsSignal = null;
+let lastBtclsTime = 0;
+
+async function fetchBtclsSignal(instrument) {
+  if (instrument !== 'BTCM') return 'NEUTRAL';
+  if (Date.now() - lastBtclsTime < 900000 && lastBtclsSignal) return lastBtclsSignal;
+  try {
+    const res = await fetch('https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=1h', {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    if (res.status !== 200) return 'NEUTRAL';
+    const data = await res.json();
+    if (!data.length) return 'NEUTRAL';
+    const latest = data[0];
+    const longPct = parseFloat(latest.longShortRatio);
+    if (isNaN(longPct)) return 'NEUTRAL';
+    let signal = 'NEUTRAL';
+    if (longPct > 1.15) signal = 'SELL';
+    else if (longPct < 0.85) signal = 'BUY';
+    lastBtclsSignal = signal;
+    lastBtclsTime = Date.now();
+    return signal;
+  } catch (err) {
+    console.warn('[BtcLS]', err.message);
+    return 'NEUTRAL';
+  }
+}
+
 // ===== SOURCE DEFINITIONS =====
 const sourceWeights = {
   investing: { weight: 1.2, label: 'Investing.com' },
+  tradingview: { weight: 1.2, label: 'TradingView' },
   topstep: { weight: 1.0, label: 'Topstep' },
   feargreed: { weight: 1.1, label: 'Fear & Greed' },
-  coingecko: { weight: 1.0, label: 'CoinGecko' }
+  coingecko: { weight: 1.0, label: 'CoinGecko' },
+  btcls: { weight: 1.0, label: 'Binance L/S' }
 };
 
 const sourceIndicators = Object.keys(sourceWeights);
@@ -187,7 +247,7 @@ let winningTrades = 0;
 let losingTrades = 0;
 
 // ===== APP STATE =====
-const defaultSources = () => ({ investing: 'NEUTRAL', topstep: 'NEUTRAL', feargreed: 'NEUTRAL', coingecko: 'NEUTRAL' });
+const defaultSources = () => ({ investing: 'NEUTRAL', tradingview: 'NEUTRAL', topstep: 'NEUTRAL', feargreed: 'NEUTRAL', coingecko: 'NEUTRAL', btcls: 'NEUTRAL' });
 const defaultSettings = () => ({
   webhookUrl: '', stopLossTicks: 80, takeProfitTicks: 160, mode: 'simulation', calibrationOffset: 0,
   atrMultiplierSL: 1.5, atrMultiplierTP: 3.0, accountBalance: 100000, riskPercent: 1.0, topstepRef: null
@@ -239,19 +299,23 @@ async function pollRealSources(instKey) {
   };
   inst.regime = detectRegime(data, inst.indicators.adx);
 
-  // Fetch from all 4 real sources in parallel
-  const [investingSig, feargreedSig, coingeckoSig] = await Promise.all([
+  // Fetch from all 6 real sources in parallel
+  const [investingSig, tradingviewSig, feargreedSig, coingeckoSig, btclsSig] = await Promise.all([
     fetchInvestingSignal(instKey),
+    fetchTradingViewSignal(instKey),
     fetchFearGreedSignal(),
-    fetchCoinGeckoSignal(instKey)
+    fetchCoinGeckoSignal(instKey),
+    fetchBtclsSignal(instKey)
   ]);
   const topstepSig = fetchTopstepSignal(instKey, price, inst.settings.topstepRef);
 
   const signals = {
     investing: investingSig,
+    tradingview: tradingviewSig,
     topstep: topstepSig,
     feargreed: feargreedSig,
-    coingecko: coingeckoSig
+    coingecko: coingeckoSig,
+    btcls: btclsSig
   };
 
   inst.sourceSignals = signals;
@@ -270,7 +334,7 @@ function weightedConfluenceScore(inst) {
     else if (inst.sources[key] === 'SELL') score -= w;
   }
   inst.confluenceScore = parseFloat(score.toFixed(2));
-  const threshold = maxPossible * 0.5;
+  const threshold = maxPossible * 0.3;
   let newConfluence = 'NEUTRAL';
   if (score >= threshold) newConfluence = 'BUY';
   else if (score <= -threshold) newConfluence = 'SELL';
@@ -635,7 +699,7 @@ function startSimulation() {
       }
     }
     broadcastState();
-    console.log('[Sources] All 4 real signal providers polled');
+    console.log('[Sources] All 6 real signal providers polled');
   }, 300000);
 
   // Initial poll after 5s startup delay
@@ -821,7 +885,7 @@ app.listen(PORT, () => {
   console.log(`================================================================`);
   console.log(`   LAMOUCHI LAB DESK - Chef-d'oeuvre`);
   console.log(`   http://localhost:${PORT}`);
-  console.log(`   Signaux: Investing.com + Topstep + Fear & Greed + CoinGecko`);
-  console.log(`   Notifications: Telegram | SL/TP: ATR dynamique | P&L: Auto`);
+   console.log(`   Signaux: Investing.com + TradingView + Topstep + Fear & Greed + CoinGecko + Binance L/S`);
+   console.log(`   Notifications: Telegram | SL/TP: ATR dynamique | P&L: Auto | Seuil: 2/6 sources`);
   console.log(`================================================================`);
 });
