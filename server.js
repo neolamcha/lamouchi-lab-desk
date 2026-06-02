@@ -61,12 +61,23 @@ async function fetchTradingView(coin) {
   } catch { return 'NEUTRAL'; }
 }
 
+const API_BASES = [DEMO_API, 'https://api.binance.com'];
+
+async function apiFetch(path) {
+  for (const base of API_BASES) {
+    try {
+      const res = await fetch(`${base}${path}`);
+      if (res.status === 200) return await res.json();
+    } catch {}
+  }
+  return null;
+}
+
 // 3. DOM — Order Book Depth Imbalance
 async function fetchDOMSignal(coin) {
-  try {
-    const res = await fetch(`${DEMO_API}/api/v3/depth?symbol=${coin}USDT&limit=20`);
+  const d = await apiFetch(`/api/v3/depth?symbol=${coin}USDT&limit=20`);
     const d = await res.json();
-    if (!d.bids || !d.asks) return 'NEUTRAL';
+    if (!d || !d.bids || !d.asks) return 'NEUTRAL';
     const bidVol = d.bids.reduce((a, b) => a + parseFloat(b[0]) * parseFloat(b[1]), 0);
     const askVol = d.asks.reduce((a, b) => a + parseFloat(b[0]) * parseFloat(b[1]), 0);
     if (bidVol === 0 || askVol === 0) return 'NEUTRAL';
@@ -79,10 +90,8 @@ async function fetchDOMSignal(coin) {
 
 // 4. Order Flow — Trade aggressor analysis
 async function fetchOrderFlowSignal(coin) {
-  try {
-    const res = await fetch(`${DEMO_API}/api/v3/trades?symbol=${coin}USDT&limit=100`);
-    const trades = await res.json();
-    if (!trades.length) return 'NEUTRAL';
+  const trades = await apiFetch(`/api/v3/trades?symbol=${coin}USDT&limit=100`);
+  if (!trades || !trades.length) return 'NEUTRAL';
     const buyVol = trades.filter(t => !t.isBuyerMaker).reduce((a, t) => a + parseFloat(t.qty), 0);
     const sellVol = trades.filter(t => t.isBuyerMaker).reduce((a, t) => a + parseFloat(t.qty), 0);
     if (sellVol === 0) return buyVol > 0 ? 'BUY' : 'NEUTRAL';
@@ -95,10 +104,8 @@ async function fetchOrderFlowSignal(coin) {
 
 // 5. VWAP
 async function fetchVWAPSignal(coin) {
-  try {
-    const res = await fetch(`${DEMO_API}/api/v3/klines?symbol=${coin}USDT&interval=1h&limit=24`);
-    const klines = await res.json();
-    if (!klines.length) return 'NEUTRAL';
+  const klines = await apiFetch(`/api/v3/klines?symbol=${coin}USDT&interval=1h&limit=24`);
+  if (!klines || !klines.length) return 'NEUTRAL';
     let volSum = 0, pvSum = 0;
     for (const k of klines) {
       const high = parseFloat(k[2]), low = parseFloat(k[3]), close = parseFloat(k[4]), vol = parseFloat(k[5]);
@@ -107,8 +114,8 @@ async function fetchVWAPSignal(coin) {
       pvSum += typPrice * vol;
     }
     const vwap = pvSum / volSum;
-    const priceRes = await fetch(`${DEMO_API}/api/v3/ticker/price?symbol=${coin}USDT`);
-    const priceJson = await priceRes.json();
+    const priceJson = await apiFetch(`/api/v3/ticker/price?symbol=${coin}USDT`);
+    if (!priceJson) return 'NEUTRAL';
     const price = parseFloat(priceJson.price);
     if (!price || !vwap) return 'NEUTRAL';
     const dev = (price - vwap) / vwap;
@@ -194,21 +201,41 @@ async function binanceRequest(endpoint, params = {}) {
 }
 
 async function fetchPrice(coin) {
-  try {
-    const url = `${DEMO_API}/api/v3/ticker/price?symbol=${coin}USDT`;
-    const res = await fetch(url);
-    const json = await res.json();
-    return parseFloat(json.price);
-  } catch { return null; }
+  const urls = [
+    `${DEMO_API}/api/v3/ticker/price?symbol=${coin}USDT`,
+    `https://api.binance.com/api/v3/ticker/price?symbol=${coin}USDT`
+  ];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url);
+      if (res.status !== 200) continue;
+      const json = await res.json();
+      const p = parseFloat(json.price);
+      if (!isNaN(p) && p > 0) return p;
+    } catch {}
+  }
+  return null;
 }
 
 async function demoBalance() {
   if (!demoApiKey || !demoApiSecret) return null;
-  try {
-    const data = await binanceRequest('/api/v3/account');
-    const usdt = data.balances?.find(b => b.asset === 'USDT');
-    return usdt ? parseFloat(usdt.free) : 0;
-  } catch { return null; }
+  // Try demo first, then production for account data
+  for (const base of API_BASES) {
+    try {
+      const ts = Date.now();
+      const crypto = require('crypto');
+      const qs = 'timestamp=' + ts + '&recvWindow=10000';
+      const sig = crypto.createHmac('sha256', demoApiSecret).update(qs).digest('hex');
+      const res = await fetch(`${base}/api/v3/account?${qs}&signature=${sig}`, {
+        headers: { 'X-MBX-APIKEY': demoApiKey }
+      });
+      if (res.status !== 200) continue;
+      const data = await res.json();
+      const usdt = data.balances?.find(b => b.asset === 'USDT');
+      if (usdt) return parseFloat(usdt.free) || 0;
+    } catch {}
+  }
+  return null;
 }
 
 // ===== STATE =====
