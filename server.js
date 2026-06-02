@@ -270,7 +270,7 @@ function weightedConfluenceScore(inst) {
     else if (inst.sources[key] === 'SELL') score -= w;
   }
   inst.confluenceScore = parseFloat(score.toFixed(2));
-  const threshold = maxPossible * 0.6;
+  const threshold = maxPossible * 0.5;
   let newConfluence = 'NEUTRAL';
   if (score >= threshold) newConfluence = 'BUY';
   else if (score <= -threshold) newConfluence = 'SELL';
