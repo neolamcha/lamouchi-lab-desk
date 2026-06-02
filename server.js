@@ -9,7 +9,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
 const INITIAL_BALANCE = 5000;
-const RISK_PER_TRADE = 15;
+const RISK_PER_TRADE = 30;
 const SIGNAL_POLL_MS = 60000;
 const PRICE_POLL_MS = 30000;
 const SCALP_SL_ATR = 0.8;
