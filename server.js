@@ -61,7 +61,7 @@ async function fetchTradingView(coin) {
   } catch { return 'NEUTRAL'; }
 }
 
-const API_BASES = [DEMO_API, 'https://api.binance.com'];
+const API_BASES = ['https://api.binance.com', DEMO_API];
 
 async function apiFetch(path) {
   for (const base of API_BASES) {
@@ -200,18 +200,38 @@ async function binanceRequest(endpoint, params = {}) {
   return JSON.parse(txt);
 }
 
+const CG_IDS = {
+  BTC: 'bitcoin', ETH: 'ethereum', BNB: 'binancecoin', XRP: 'ripple',
+  SOL: 'solana', TRX: 'tron', DOGE: 'dogecoin', ADA: 'cardano',
+  XLM: 'stellar', HYPE: 'hyperliquid', PAXG: 'pax-gold'
+};
+
 async function fetchPrice(coin) {
+  // Try Binance (demo first, then production)
   const urls = [
-    `${DEMO_API}/api/v3/ticker/price?symbol=${coin}USDT`,
-    `https://api.binance.com/api/v3/ticker/price?symbol=${coin}USDT`
+    `https://api.binance.com/api/v3/ticker/price?symbol=${coin}USDT`,
+    `${DEMO_API}/api/v3/ticker/price?symbol=${coin}USDT`
   ];
   for (const url of urls) {
     try {
       const res = await fetch(url);
-      if (res.status !== 200) continue;
-      const json = await res.json();
-      const p = parseFloat(json.price);
-      if (!isNaN(p) && p > 0) return p;
+      if (res.status === 200) {
+        const json = await res.json();
+        const p = parseFloat(json.price);
+        if (!isNaN(p) && p > 0) return p;
+      }
+    } catch {}
+  }
+  // Fallback: CoinGecko
+  const cgId = CG_IDS[coin];
+  if (cgId) {
+    try {
+      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cgId}&vs_currencies=usd`);
+      if (res.status === 200) {
+        const json = await res.json();
+        const p = parseFloat(json[cgId]?.usd);
+        if (!isNaN(p) && p > 0) return p;
+      }
     } catch {}
   }
   return null;
