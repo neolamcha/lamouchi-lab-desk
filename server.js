@@ -1,829 +1,446 @@
 const express = require('express');
 const path = require('path');
+const ccxt = require('ccxt');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-let lastYahooPrice = 30535.50;
+const PORT = process.env.PORT || 3000;
+const INITIAL_BALANCE = 200;
+const RISK_PER_TRADE = 15;
+const SIGNAL_POLL_MS = 300000;
+const PRICE_POLL_MS = 10000;
 
-// ===== HELPER FUNCTIONS (for regime detection and ATR SL/TP) =====
-function calcSMA(data, period) {
-  if (data.length < period) return null;
-  return data.slice(data.length - period).reduce((a, b) => a + b, 0) / period;
-}
-
-function calcATR(data, period = 14) {
-  if (data.length < period + 1) return null;
-  const trs = [];
-  for (let i = data.length - period; i < data.length; i++) {
-    const high = Math.max(data[i], data[i - 1] || data[i]);
-    const low = Math.min(data[i], data[i - 1] || data[i]);
-    const prevClose = data[i - 1] || data[i];
-    trs.push(Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose)));
-  }
-  return trs.reduce((a, b) => a + b, 0) / period;
-}
-
-function calcADX(data, period = 14) {
-  if (data.length < period * 2) return 20;
-  let plusDM = 0, minusDM = 0, tr = 0;
-  for (let i = data.length - period; i < data.length; i++) {
-    const up = data[i] - data[i - 1];
-    const down = data[i - 1] - data[i];
-    plusDM += (up > down && up > 0) ? up : 0;
-    minusDM += (down > up && down > 0) ? down : 0;
-    tr += Math.abs(data[i] - data[i - 1]);
-  }
-  const avgTR = tr / period;
-  if (avgTR === 0) return 20;
-  const plusDI = (plusDM / period / avgTR) * 100;
-  const minusDI = (minusDM / period / avgTR) * 100;
-  const dx = Math.abs(plusDI - minusDI) / (plusDI + minusDI) * 100;
-  return isNaN(dx) ? 20 : dx;
-}
-
-// ===== MARKET REGIME =====
-function detectRegime(data, adx) {
-  if (data.length < 52) return { regime: 'INITIALIZING', direction: 'NEUTRAL', adx: adx || 20 };
-  const price = data[data.length - 1];
-  const sma20 = calcSMA(data, 20);
-  const sma50 = calcSMA(data, 50);
-  const sma200 = calcSMA(data, 200) || calcSMA(data, 100) || sma50;
-  const atr = calcATR(data) || 0;
-  const atrPercent = (atr / price) * 100;
-
-  let regime = 'RANGING';
-  if (adx > 25) regime = 'TRENDING';
-  if (adx > 40) regime = 'STRONG_TREND';
-  if (atrPercent > 2) regime += '_VOLATILE';
-
-  let direction = 'NEUTRAL';
-  const trendUp = price > sma20 && sma20 > sma50 && price > sma200;
-  const trendDn = price < sma20 && sma20 < sma50 && price < sma200;
-  if (trendUp) direction = 'BULLISH';
-  else if (trendDn) direction = 'BEARISH';
-  else if (price > sma50) direction = 'BULLISH';
-  else if (price < sma50) direction = 'BEARISH';
-
-  const bbWidth = atrPercent > 1.5 ? 'WIDE' : 'NARROW';
-  const regimeDetail = regime + (bbWidth === 'WIDE' ? ' + BREAKOUT' : ' + CONTRACTION');
-
-  return { regime: regimeDetail, direction, adx, atrPercent: atrPercent.toFixed(2) };
-}
-
-// ===== REAL SIGNAL PROVIDERS =====
-
-// 1. Investing.com Technical Summary (MNQ, GCM)
-const INVESTING_PAIRS = {
-  MNQ: { path: '/indices/nq-100-technical', pairId: 20 },
-  BTCM: null,
-  GCM: { path: '/commodities/gold-technical', pairId: 8830 }
-};
-
-async function fetchInvestingSignal(instrument) {
-  const cfg = INVESTING_PAIRS[instrument];
-  if (!cfg) return 'NEUTRAL';
-  try {
-    const res = await fetch('https://www.investing.com' + cfg.path, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' }
-    });
-    if (res.status !== 200) return 'NEUTRAL';
-    const html = await res.text();
-    const scriptMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
-    if (!scriptMatch) return 'NEUTRAL';
-    const json = JSON.parse(scriptMatch[1]);
-    const stateStr = JSON.stringify(json.props.pageProps.state);
-    const regex = /"Name":"([^"]+)","TechSummary":"([^"]+)","pair":(\d+)/g;
-    let m;
-    while ((m = regex.exec(stateStr)) !== null) {
-      if (parseInt(m[3]) === cfg.pairId) {
-        const summary = m[2].toLowerCase();
-        if (summary === 'strong_buy' || summary === 'buy') return 'BUY';
-        if (summary === 'strong_sell' || summary === 'sell') return 'SELL';
-        return 'NEUTRAL';
-      }
-    }
-    return 'NEUTRAL';
-  } catch (err) {
-    console.warn(`[Investing ${instrument}]`, err.message);
-    return 'NEUTRAL';
-  }
-}
-
-// 2. Topstep Settlement Mean Reversion (MNQ, GCM)
-function fetchTopstepSignal(instrument, price, settlementRef) {
-  if (!settlementRef || !price) return 'NEUTRAL';
-  const thresholds = { MNQ: 0.003, BTCM: 0.008, GCM: 0.004 };
-  const threshold = thresholds[instrument] || 0.005;
-  const deviation = (price - settlementRef) / settlementRef;
-  if (deviation > threshold) return 'SELL';
-  if (deviation < -threshold) return 'BUY';
-  return 'NEUTRAL';
-}
-
-// 3. Fear & Greed Index (market sentiment)
+// ===== SIGNAL SOURCES =====
+// 1. Fear & Greed Index (global)
 let lastFearGreed = null;
 let lastFearGreedTime = 0;
 
-async function fetchFearGreedSignal() {
+async function fetchFearGreed() {
   if (Date.now() - lastFearGreedTime < 3600000 && lastFearGreed) return lastFearGreed;
   try {
     const res = await fetch('https://api.alternative.me/fng/?limit=1');
     const json = await res.json();
     const value = parseInt(json?.data?.[0]?.value);
     if (isNaN(value)) return 'NEUTRAL';
-    let signal = 'NEUTRAL';
-    if (value <= 25) signal = 'BUY';
-    else if (value >= 75) signal = 'SELL';
-    lastFearGreed = signal;
+    let s = 'NEUTRAL';
+    if (value <= 25) s = 'BUY';
+    else if (value >= 75) s = 'SELL';
+    lastFearGreed = s;
     lastFearGreedTime = Date.now();
-    return signal;
-  } catch (err) {
-    console.warn('[FearGreed]', err.message);
-    return 'NEUTRAL';
-  }
+    return s;
+  } catch { return 'NEUTRAL'; }
 }
 
-// 4. CoinGecko Community Sentiment (BTC)
-let lastCoinGeckoSignal = null;
-let lastCoinGeckoTime = 0;
-
-async function fetchCoinGeckoSignal(instrument) {
-  if (instrument !== 'BTCM') return 'NEUTRAL';
-  if (Date.now() - lastCoinGeckoTime < 1800000 && lastCoinGeckoSignal) return lastCoinGeckoSignal;
-  try {
-    const res = await fetch('https://api.coingecko.com/api/v3/coins/bitcoin?localization=false&tickers=false&community_data=true&developer_data=false&sparkline=false');
-    const json = await res.json();
-    const up = json?.sentiment_votes_up_percentage;
-    const down = json?.sentiment_votes_down_percentage;
-    if (up == null || down == null) return 'NEUTRAL';
-    let signal = 'NEUTRAL';
-    if (up > 65) signal = 'BUY';
-    else if (down > 65) signal = 'SELL';
-    lastCoinGeckoSignal = signal;
-    lastCoinGeckoTime = Date.now();
-    return signal;
-  } catch (err) {
-    console.warn('[CoinGecko]', err.message);
-    return 'NEUTRAL';
-  }
-}
-
-// 5. TradingView Technical Summary
-const TRADINGVIEW_SYMBOLS = {
-  MNQ: 'nasdaq100',
-  GCM: 'gold',
-  BTCM: 'bitcoin'
+// 2. TradingView Technical Summary
+const TV_SYMBOLS = {
+  'BTC': 'bitcoin', 'ETH': 'ethereum', 'BNB': 'bnb', 'XRP': 'ripple',
+  'SOL': 'solana', 'ADA': 'cardano', 'DOGE': 'dogecoin', 'AVAX': 'avalanche',
+  'DOT': 'polkadot', 'LINK': 'chainlink', 'PAXG': 'gold'
 };
 
-async function fetchTradingViewSignal(instrument) {
-  const symbol = TRADINGVIEW_SYMBOLS[instrument];
+async function fetchTradingView(coin) {
+  const symbol = TV_SYMBOLS[coin];
   if (!symbol) return 'NEUTRAL';
   try {
-    const url = `https://www.tradingview.com/symbols/${symbol}/technicals/`;
-    const res = await fetch(url, {
+    const res = await fetch(`https://www.tradingview.com/symbols/${symbol}/technicals/`, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' }
     });
     const html = await res.text();
-    const recMatch = html.match(/"RECOMMENDATION":"(BUY|SELL|NEUTRAL)"/);
-    if (recMatch) return recMatch[1];
-    const buyMatch = html.match(/strong.?buy/i);
-    const sellMatch = html.match(/strong.?sell/i);
-    if (buyMatch && !sellMatch) return 'BUY';
-    if (sellMatch && !buyMatch) return 'SELL';
+    const m = html.match(/"RECOMMENDATION":"(BUY|SELL|NEUTRAL)"/);
+    if (m) return m[1];
+    const b = html.match(/strong.?buy/i);
+    const s = html.match(/strong.?sell/i);
+    if (b && !s) return 'BUY';
+    if (s && !b) return 'SELL';
     return 'NEUTRAL';
-  } catch (err) {
-    console.warn(`[TradingView ${instrument}]`, err.message);
-    return 'NEUTRAL';
-  }
+  } catch { return 'NEUTRAL'; }
 }
 
-// 6. Binance BTC Long/Short Ratio
-let lastBtclsSignal = null;
-let lastBtclsTime = 0;
-
-async function fetchBtclsSignal(instrument) {
-  if (instrument !== 'BTCM') return 'NEUTRAL';
-  if (Date.now() - lastBtclsTime < 900000 && lastBtclsSignal) return lastBtclsSignal;
-  try {
-    const res = await fetch('https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=1h', {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
-    });
-    if (res.status !== 200) return 'NEUTRAL';
-    const data = await res.json();
-    if (!data.length) return 'NEUTRAL';
-    const latest = data[0];
-    const longPct = parseFloat(latest.longShortRatio);
-    if (isNaN(longPct)) return 'NEUTRAL';
-    let signal = 'NEUTRAL';
-    if (longPct > 1.15) signal = 'SELL';
-    else if (longPct < 0.85) signal = 'BUY';
-    lastBtclsSignal = signal;
-    lastBtclsTime = Date.now();
-    return signal;
-  } catch (err) {
-    console.warn('[BtcLS]', err.message);
-    return 'NEUTRAL';
+// 3. Internal RSI
+function calcRSI(data, period = 14) {
+  if (data.length < period + 1) return 50;
+  const closes = data.slice(-period - 1);
+  let gains = 0, losses = 0;
+  for (let i = 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff > 0) gains += diff;
+    else losses -= diff;
   }
+  const avgGain = gains / period;
+  const avgLoss = losses / period;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
 }
 
-// ===== SOURCE DEFINITIONS =====
-const sourceWeights = {
-  investing: { weight: 1.2, label: 'Investing.com' },
-  tradingview: { weight: 1.2, label: 'TradingView' },
-  topstep: { weight: 1.0, label: 'Topstep' },
-  feargreed: { weight: 1.1, label: 'Fear & Greed' },
-  coingecko: { weight: 1.0, label: 'CoinGecko' },
-  btcls: { weight: 1.0, label: 'Binance L/S' }
+function rsiSignal(rsi) {
+  if (rsi <= 35) return 'BUY';
+  if (rsi >= 65) return 'SELL';
+  return 'NEUTRAL';
+}
+
+// 4. Internal EMA trend
+function calcEMA(data, period) {
+  if (data.length < period) return null;
+  const k = 2 / (period + 1);
+  let ema = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < data.length; i++) {
+    ema = data[i] * k + ema * (1 - k);
+  }
+  return ema;
+}
+
+function trendSignal(price, ema) {
+  if (ema == null) return 'NEUTRAL';
+  const pct = (price - ema) / ema;
+  if (pct > 0.01) return 'BUY';
+  if (pct < -0.01) return 'SELL';
+  return 'NEUTRAL';
+}
+
+// ===== TOP 10 FETCHER ====
+const COIN_MAP = {
+  'bitcoin': 'BTC', 'ethereum': 'ETH', 'binancecoin': 'BNB', 'ripple': 'XRP',
+  'solana': 'SOL', 'cardano': 'ADA', 'dogecoin': 'DOGE',
+  'avalanche-2': 'AVAX', 'polkadot': 'DOT', 'chainlink': 'LINK',
+  'tron': 'TRX', 'shiba-inu': 'SHIB', 'the-open-network': 'TON',
+  'polygon': 'MATIC', 'pol': 'POL', 'stellar': 'XLM', 'hyperliquid': 'HYPE',
+  'near': 'NEAR', 'aptos': 'APT', 'arbitrum': 'ARB', 'internet-computer': 'ICP',
+  'hedera': 'HBAR', 'render': 'RENDER', 'ethereum-classic': 'ETC',
+  'vechain': 'VET', 'filecoin': 'FIL', 'maker': 'MKR', 'aave': 'AAVE',
+  'cosmos': 'ATOM', 'uniswap': 'UNI', 'litecoin': 'LTC', 'bitcoinCash': 'BCH',
+  'fetch': 'FET', 'fetch-ai': 'FET'
 };
 
-const sourceIndicators = Object.keys(sourceWeights);
+let topCoins = [];
 
+async function refreshTop10() {
+  try {
+    const res = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=25');
+    const data = await res.json();
+    const mapped = [];
+    for (const c of data) {
+      const ticker = COIN_MAP[c.id];
+      if (ticker && !mapped.includes(ticker)) mapped.push(ticker);
+    }
+    topCoins = mapped.slice(0, 10);
+    if (!topCoins.includes('PAXG')) topCoins.push('PAXG');
+    console.log('[TopCoins]', topCoins.join(', '));
+  } catch (e) {
+    console.warn('[TopCoins]', e.message);
+    if (!topCoins.length) topCoins = ['BTC', 'ETH', 'BNB', 'XRP', 'SOL', 'ADA', 'DOGE', 'AVAX', 'DOT', 'LINK', 'PAXG'];
+  }
+}
+
+// ===== BINANCE TESTNET =====
+let binance = null;
+let binanceReady = false;
+
+function initBinance(apiKey, apiSecret) {
+  try {
+    binance = new ccxt.binance({
+      apiKey: apiKey || '',
+      secret: apiSecret || '',
+      options: { defaultType: 'spot' }
+    });
+    binance.setSandboxMode(true);
+    binanceReady = true;
+    return true;
+  } catch (e) { return false; }
+}
+
+async function fetchPrice(coin) {
+  if (binanceReady && binance) {
+    try {
+      const ticker = await binance.fetchTicker(`${coin}/USDT`);
+      return ticker.last;
+    } catch {}
+  }
+  try {
+    const res = await fetch(`https://testnet.binance.vision/api/v3/ticker/price?symbol=${coin}USDT`);
+    if (res.status !== 200) return null;
+    const json = await res.json();
+    return parseFloat(json.price);
+  } catch { return null; }
+}
+
+// ===== STATE =====
+let clients = [];
 let totalPL = 0;
-let winningTrades = 0;
-let losingTrades = 0;
 
-// ===== APP STATE =====
-const defaultSources = () => ({ investing: 'NEUTRAL', tradingview: 'NEUTRAL', topstep: 'NEUTRAL', feargreed: 'NEUTRAL', coingecko: 'NEUTRAL', btcls: 'NEUTRAL' });
-const defaultSettings = () => ({
-  webhookUrl: '', stopLossTicks: 80, takeProfitTicks: 160, mode: 'simulation', calibrationOffset: 0,
-  atrMultiplierSL: 1.5, atrMultiplierTP: 3.0, accountBalance: 100000, riskPercent: 1.0, topstepRef: null
-});
-const defaultAnalytics = () => ({ totalSignals: 0, wins: 0, losses: 0, winRate: 0, totalPL: 0, avgReturn: 0, maxDrawdown: 0 });
-const defaultRegime = () => ({ regime: 'INITIALIZING', direction: 'NEUTRAL', adx: 20, atrPercent: '0.00' });
+let portfolio = {
+  balance: INITIAL_BALANCE,
+  totalPL: 0,
+  winCount: 0,
+  lossCount: 0,
+  tradeCount: 0
+};
 
-function createInstrument(price) {
+let instruments = {};
+
+function createInst(coin) {
+  const nameMap = {
+    BTC: 'Bitcoin', ETH: 'Ethereum', BNB: 'BNB', XRP: 'XRP',
+    SOL: 'Solana', ADA: 'Cardano', DOGE: 'Dogecoin', AVAX: 'Avalanche',
+    DOT: 'Polkadot', LINK: 'Chainlink', PAXG: 'Pax Gold'
+  };
   return {
-    price,
-    sources: defaultSources(),
-    sourceSignals: {},
-    confluence: 'NEUTRAL',
-    confluenceScore: 0,
-    settings: defaultSettings(),
+    coin, name: nameMap[coin] || coin,
+    price: 0, priceHistory: [],
+    sources: { tradingview: 'NEUTRAL', feargreed: 'NEUTRAL', rsi: 'NEUTRAL', trend: 'NEUTRAL' },
+    confluence: 'NEUTRAL', confluenceScore: 0,
+    position: null,
     history: [],
-    priceHistory: [],
-    indicators: { atr: 0, adx: 20 },
-    regime: defaultRegime(),
-    analytics: defaultAnalytics()
+    analytics: { wins: 0, losses: 0, pl: 0, totalPL: 0 }
   };
 }
 
-let appState = {
-  instruments: {
-    MNQ: createInstrument(30535.50),
-    BTCM: createInstrument(25000.00),
-    GCM: createInstrument(1800.00)
+function calcConfluence(inst) {
+  const weights = { tradingview: 1.2, feargreed: 1.0, rsi: 1.0, trend: 1.0 };
+  let score = 0, maxP = 0;
+  for (const [k, w] of Object.entries(weights)) {
+    maxP += w;
+    if (inst.sources[k] === 'BUY') score += w;
+    else if (inst.sources[k] === 'SELL') score -= w;
   }
-};
+  inst.confluenceScore = parseFloat(score.toFixed(2));
+  const threshold = maxP * 0.35;
+  let conf = 'NEUTRAL';
+  if (score >= threshold) conf = 'BUY';
+  else if (score <= -threshold) conf = 'SELL';
+  const prev = inst.confluence;
+  inst.confluence = conf;
+  if (conf !== 'NEUTRAL' && prev === 'NEUTRAL') return conf;
+  return null;
+}
 
-let clients = [];
+// ===== SIGNAL POLLING =====
+async function pollSignals(coin) {
+  const inst = instruments[coin];
+  if (!inst || inst.price <= 0) return;
 
+  const [tvSig, fgSig] = await Promise.all([
+    fetchTradingView(coin),
+    fetchFearGreed()
+  ]);
+
+  const rsiVal = calcRSI(inst.priceHistory);
+  const ema20 = calcEMA(inst.priceHistory, 20);
+
+  inst.sources = {
+    tradingview: tvSig,
+    feargreed: fgSig,
+    rsi: rsiSignal(rsiVal),
+    trend: trendSignal(inst.price, ema20)
+  };
+
+  const signal = calcConfluence(inst);
+  if (signal) await executeTrade(coin, signal);
+}
+
+// ===== POSITION SIZING =====
+function computeSLTP(price, side, atr) {
+  const slMult = 1.5, tpMult = 3.0;
+  const slDist = Math.max(atr * slMult, price * 0.005);
+  const tpDist = Math.max(atr * tpMult, price * 0.015);
+  if (side === 'BUY') {
+    return { sl: price - slDist, tp: price + tpDist };
+  }
+  return { sl: price + slDist, tp: price - tpDist };
+}
+
+function calcSize(price, sl, side) {
+  const riskPerUnit = Math.abs(price - sl);
+  if (riskPerUnit < 0.01) return 0;
+  let qty = RISK_PER_TRADE / riskPerUnit;
+  const prec = price > 100 ? 3 : price > 1 ? 2 : 1;
+  qty = Math.floor(qty * (10 ** prec)) / (10 ** prec);
+  return Math.max(qty, 0.001);
+}
+
+// ===== TRADE EXECUTION =====
+async function executeTrade(coin, side) {
+  const inst = instruments[coin];
+  if (inst.position) return;
+
+  const price = inst.price;
+  const atr = inst.priceHistory.length > 14 ? calcRSI(inst.priceHistory) * price * 0.002 : price * 0.01;
+  const { sl, tp } = computeSLTP(price, side, atr);
+  const qty = calcSize(price, sl, side);
+  if (qty <= 0) return;
+
+  const pos = {
+    id: Date.now().toString(),
+    coin, side, entryPrice: price, qty, sl, tp,
+    status: 'ACTIVE', exitPrice: null, pl: null,
+    openedAt: new Date().toISOString()
+  };
+
+  console.log(`[TRADE] ${side} ${coin} @ ${price} x${qty} | SL: ${sl.toFixed(2)} TP: ${tp.toFixed(2)}`);
+
+  if (telegramConfig.enabled) {
+    sendTelegramNotif(`🟢 *${side} ${coin}* @ $${price.toFixed(2)} x${qty}\nSL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}`);
+  }
+
+  inst.position = pos;
+  portfolio.tradeCount++;
+  broadcastState();
+}
+
+async function closePosition(coin, reason) {
+  const inst = instruments[coin];
+  if (!inst.position) return;
+
+  const pos = inst.position;
+  const exitPrice = inst.price;
+  const isLong = pos.side === 'BUY';
+  const plPct = isLong ? ((exitPrice - pos.entryPrice) / pos.entryPrice) : ((pos.entryPrice - exitPrice) / pos.entryPrice);
+  const plDollars = plPct * pos.qty * pos.entryPrice;
+
+  pos.status = reason === 'TP' ? 'WIN' : 'LOSS';
+  pos.exitPrice = exitPrice;
+  pos.pl = parseFloat(plDollars.toFixed(2));
+  pos.closedAt = new Date().toISOString();
+
+  portfolio.totalPL = parseFloat((portfolio.totalPL + plDollars).toFixed(2));
+  portfolio.balance = parseFloat((INITIAL_BALANCE + portfolio.totalPL).toFixed(2));
+  if (pos.status === 'WIN') portfolio.winCount++;
+  else portfolio.lossCount++;
+
+  inst.analytics.wins += pos.status === 'WIN' ? 1 : 0;
+  inst.analytics.losses += pos.status === 'LOSS' ? 1 : 0;
+  inst.analytics.pl += plDollars;
+
+  inst.history.unshift(pos);
+  inst.position = null;
+
+  console.log(`[CLOSE] ${coin} ${pos.side} @ ${exitPrice.toFixed(2)} | PnL: $${plDollars.toFixed(2)} | ${reason}`);
+
+  if (telegramConfig.enabled) {
+    const emoji = pos.status === 'WIN' ? '✅' : '❌';
+    sendTelegramNotif(`${emoji} *${pos.status} ${coin}* | PnL: $${plDollars.toFixed(2)}\nEntrée: $${pos.entryPrice.toFixed(2)} → Sortie: $${exitPrice.toFixed(2)} | Balance: $${portfolio.balance}`);
+  }
+
+  broadcastState();
+}
+
+// ===== PORTFOLIO MONITOR =====
+function checkPositions() {
+  for (const coin of topCoins) {
+    const inst = instruments[coin];
+    if (!inst || !inst.position || inst.position.status !== 'ACTIVE') continue;
+    const pos = inst.position;
+    const price = inst.price;
+
+    if (pos.side === 'BUY') {
+      if (price >= pos.tp) closePosition(coin, 'TP');
+      else if (price <= pos.sl) closePosition(coin, 'SL');
+    } else {
+      if (price <= pos.tp) closePosition(coin, 'TP');
+      else if (price >= pos.sl) closePosition(coin, 'SL');
+    }
+  }
+}
+
+// ===== BROADCAST =====
+function broadcastState() {
+  const data = JSON.stringify({
+    portfolio, topCoins, instruments,
+    telegramConfig: { enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId }
+  });
+  clients.forEach(c => c.write(`data: ${data}\n\n`));
+}
+
+// ===== TELEGRAM =====
 let telegramConfig = {
   enabled: !!process.env.TELEGRAM_BOT_TOKEN,
   botToken: process.env.TELEGRAM_BOT_TOKEN || '',
   chatId: process.env.TELEGRAM_CHAT_ID || ''
 };
 
-// ===== REAL SOURCE POLLING =====
-async function pollRealSources(instKey) {
-  const inst = appState.instruments[instKey];
-  const price = inst.price;
-  const data = inst.priceHistory;
-
-  inst.indicators = {
-    atr: calcATR(data) || 0,
-    adx: calcADX(data) || 20
-  };
-  inst.regime = detectRegime(data, inst.indicators.adx);
-
-  // Fetch from all 6 real sources in parallel
-  const [investingSig, tradingviewSig, feargreedSig, coingeckoSig, btclsSig] = await Promise.all([
-    fetchInvestingSignal(instKey),
-    fetchTradingViewSignal(instKey),
-    fetchFearGreedSignal(),
-    fetchCoinGeckoSignal(instKey),
-    fetchBtclsSignal(instKey)
-  ]);
-  const topstepSig = fetchTopstepSignal(instKey, price, inst.settings.topstepRef);
-
-  const signals = {
-    investing: investingSig,
-    tradingview: tradingviewSig,
-    topstep: topstepSig,
-    feargreed: feargreedSig,
-    coingecko: coingeckoSig,
-    btcls: btclsSig
-  };
-
-  inst.sourceSignals = signals;
-  for (const key of sourceIndicators) {
-    inst.sources[key] = signals[key];
-  }
-}
-
-function weightedConfluenceScore(inst) {
-  let score = 0;
-  let maxPossible = 0;
-  for (const key of sourceIndicators) {
-    const w = sourceWeights[key].weight;
-    maxPossible += w;
-    if (inst.sources[key] === 'BUY') score += w;
-    else if (inst.sources[key] === 'SELL') score -= w;
-  }
-  inst.confluenceScore = parseFloat(score.toFixed(2));
-  const threshold = maxPossible * 0.3;
-  let newConfluence = 'NEUTRAL';
-  if (score >= threshold) newConfluence = 'BUY';
-  else if (score <= -threshold) newConfluence = 'SELL';
-
-  return { confluence: newConfluence, score, maxPossible };
-}
-
-// ===== ATR-BASED SL/TP =====
-const minAtrFloor = { MNQ: 30, BTCM: 800, GCM: 15 };
-function calcDynamicLevels(instKey, inst, direction) {
-  const atr = Math.max(inst.indicators.atr || 1, (minAtrFloor[instKey] || 1) * 0.5);
-  const price = inst.price;
-  const slMult = inst.settings.atrMultiplierSL;
-  const tpMult = inst.settings.atrMultiplierTP;
-  const slDist = atr * slMult;
-  const tpDist = atr * tpMult;
-  let stopLoss, takeProfit;
-  if (direction === 'BUY') {
-    stopLoss = price - slDist;
-    takeProfit = price + tpDist;
-  } else {
-    stopLoss = price + slDist;
-    takeProfit = price - tpDist;
-  }
-  return { stopLoss: parseFloat(stopLoss.toFixed(2)), takeProfit: parseFloat(takeProfit.toFixed(2)) };
-}
-
-// ===== POSITION SIZING =====
-function calcPositionSize(inst, entryPrice, stopLoss) {
-  const riskPerTrade = inst.settings.accountBalance * (inst.settings.riskPercent / 100);
-  const riskPerUnit = Math.abs(entryPrice - stopLoss);
-  if (riskPerUnit === 0) return 1;
-  return Math.max(1, Math.floor(riskPerTrade / riskPerUnit));
-}
-
-// ===== BROADCAST =====
-function broadcastState() {
-  const data = JSON.stringify({
-    instruments: appState.instruments,
-    telegramConfig: { enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId }
-  });
-  clients.forEach(client => client.write(`data: ${data}\n\n`));
-}
-
-// ===== EVALUATE CONFLUENCE =====
-function evaluateConfluence(instrKey) {
-  const inst = appState.instruments[instrKey];
-  if (inst.settings.mode === 'manual') return;
-  const { confluence, score } = weightedConfluenceScore(inst);
-  const prev = inst.confluence;
-  inst.confluence = confluence;
-  if (confluence !== 'NEUTRAL' && prev === 'NEUTRAL') {
-    triggerSignal(instrKey, confluence);
-  }
-}
-
-// ===== P&L TRACKING =====
-function updateActiveSignals(instrKey) {
-  const inst = appState.instruments[instrKey];
-  if (!inst.history.length) return;
-  const activeSignals = inst.history.filter(s => s.status === 'ACTIVE');
-  const price = inst.price;
-  for (const sig of activeSignals) {
-    const sl = parseFloat(sig.stopLoss);
-    const tp = parseFloat(sig.takeProfit);
-    const entry = parseFloat(sig.entryPrice);
-    if (sig.direction === 'BUY') {
-      if (price >= tp) {
-        sig.status = 'WIN';
-        sig.exitPrice = price;
-        sig.exitTime = new Date().toISOString();
-        sig.pl = ((price - entry) / entry) * 100;
-        inst.analytics.wins++;
-      } else if (price <= sl) {
-        sig.status = 'LOSS';
-        sig.exitPrice = price;
-        sig.exitTime = new Date().toISOString();
-        sig.pl = ((price - entry) / entry) * 100;
-        inst.analytics.losses++;
-      }
-    } else {
-      if (price <= tp) {
-        sig.status = 'WIN';
-        sig.exitPrice = price;
-        sig.exitTime = new Date().toISOString();
-        sig.pl = ((entry - price) / entry) * 100;
-        inst.analytics.wins++;
-      } else if (price >= sl) {
-        sig.status = 'LOSS';
-        sig.exitPrice = price;
-        sig.exitTime = new Date().toISOString();
-        sig.pl = ((entry - price) / entry) * 100;
-        inst.analytics.losses++;
-      }
-    }
-    if (sig.status !== 'ACTIVE') {
-      inst.analytics.totalSignals++;
-      const plVal = sig.pl || 0;
-      inst.analytics.totalPL = parseFloat((inst.analytics.totalPL + plVal).toFixed(2));
-      const total = inst.analytics.wins + inst.analytics.losses;
-      inst.analytics.winRate = total > 0 ? parseFloat(((inst.analytics.wins / total) * 100).toFixed(1)) : 0;
-      inst.analytics.avgReturn = inst.analytics.totalSignals > 0
-        ? parseFloat((inst.analytics.totalPL / inst.analytics.totalSignals).toFixed(2)) : 0;
-      if (inst.analytics.totalPL < inst.analytics.maxDrawdown) {
-        inst.analytics.maxDrawdown = inst.analytics.totalPL;
-      }
-    }
-  }
-}
-
-// ===== TRIGGER SIGNAL =====
-async function triggerSignal(instrKey, direction) {
-  const inst = appState.instruments[instrKey];
-  const entryPrice = inst.price;
-
-  // ATR-based SL/TP
-  const levels = calcDynamicLevels(instrKey, inst, direction);
-  const stopLoss = levels.stopLoss;
-  const takeProfit = levels.takeProfit;
-
-  // Position sizing
-  const quantity = calcPositionSize(inst, entryPrice, stopLoss);
-
-  const signalEvent = {
-    id: Date.now().toString(),
-    timestamp: new Date().toISOString(),
-    instrument: instrKey,
-    direction,
-    entryPrice: entryPrice.toFixed(2),
-    stopLoss: stopLoss.toFixed(2),
-    takeProfit: takeProfit.toFixed(2),
-    quantity,
-    status: 'ACTIVE',
-    exitPrice: null,
-    exitTime: null,
-    pl: null,
-    regime: inst.regime.regime,
-    regimeDirection: inst.regime.direction,
-    confluenceScore: inst.confluenceScore,
-    webhookStatus: 'PENDING'
-  };
-
-  console.log(`[CONFLUENCE SIGNAL] ${direction} ${instrKey} @ ${entryPrice.toFixed(2)} | SL: ${stopLoss} | TP: ${takeProfit} | Qty: ${quantity} | Score: ${inst.confluenceScore}`);
-
-  // Webhook
-  if (inst.settings.webhookUrl) {
-    try {
-      signalEvent.webhookStatus = 'SENDING';
-      broadcastState();
-      const response = await fetch(inst.settings.webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: direction === 'BUY' ? 'buy' : 'sell',
-          ticker: instrKey,
-          quantity,
-          price: entryPrice,
-          stopLoss,
-          takeProfit,
-          regime: inst.regime,
-          confluenceScore: inst.confluenceScore,
-          comment: `Lamouchi Lab Desk - ${inst.regime.regime} / ${inst.regime.direction}`,
-          timestamp: signalEvent.timestamp
-        })
-      });
-      signalEvent.webhookStatus = response.ok ? 'SUCCESS' : 'FAILED';
-    } catch (error) {
-      signalEvent.webhookStatus = 'ERROR';
-      console.error('[Webhook Error]', error.message);
-    }
-  } else {
-    signalEvent.webhookStatus = 'NOT_CONFIGURED';
-  }
-
-  inst.history.unshift(signalEvent);
-  if (inst.history.length > 200) inst.history.pop();
-
-  // Telegram
-  if (telegramConfig.enabled && telegramConfig.botToken && telegramConfig.chatId) {
-    try {
-      await sendTelegramAlert(signalEvent, instrKey, inst);
-    } catch (err) {
-      console.error('[Telegram Error]', err.message);
-    }
-  }
-
-  broadcastState();
-}
-
-// ===== TELEGRAM =====
-async function sendTelegramAlert(signal, instrKey, inst) {
-  if (!telegramConfig.botToken || !telegramConfig.chatId) return;
-  const instrName = { MNQ: 'NASDAQ (MNQ)', BTCM: 'BITCOIN (BTCM)', GCM: 'GOLD (GCM)' }[instrKey] || instrKey;
-  const emoji = signal.direction === 'BUY' ? '🟢' : '🔴';
-  const date = new Date(signal.timestamp).toLocaleString('fr-FR');
-  const riskAmt = (inst.settings.accountBalance * inst.settings.riskPercent / 100).toFixed(2);
-
-  const text = [
-    `${emoji} *LAMOUCHI LAB DESK*`,
-    `*Signal:* ${signal.direction} · ${instrName}`,
-    `*Entrée:* ${signal.entryPrice}  |  *Score:* ${signal.confluenceScore}`,
-    `*SL:* ${signal.stopLoss}  |  *TP:* ${signal.takeProfit}`,
-    `*Qté:* ${signal.quantity}  |  *Risque:* \$${riskAmt}`,
-    `*Régime:* ${inst.regime.regime} / ${inst.regime.direction}`,
-    `🕐 ${date}`
-  ].join('\n');
-
+async function sendTelegramNotif(text) {
+  if (!telegramConfig.enabled || !telegramConfig.botToken || !telegramConfig.chatId) return;
   try {
-    const url = `https://api.telegram.org/bot${telegramConfig.botToken}/sendMessage`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: telegramConfig.chatId,
-        text: text,
-        parse_mode: 'Markdown'
-      })
+    await fetch(`https://api.telegram.org/bot${telegramConfig.botToken}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: telegramConfig.chatId, text, parse_mode: 'Markdown' })
     });
-    if (!res.ok) {
-      const errBody = await res.text();
-      console.error('[Telegram] API error:', res.status, errBody);
-    } else {
-      console.log(`[Telegram] Alert sent to ${telegramConfig.chatId}`);
-    }
-  } catch (err) {
-    console.error('[Telegram] Error:', err.message);
+  } catch {}
+}
+
+// ===== INIT =====
+async function init() {
+  await refreshTop10();
+  for (const coin of topCoins) {
+    instruments[coin] = createInst(coin);
   }
-}
+  initBinance();
 
-// ===== PRICE FETCHING =====
-async function fetchNQFromBarchart() {
-  try {
-    const res = await fetch('https://www.barchart.com/futures/quotes/NQ*0/futures-prices', {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'text/html,application/xhtml+xml' }
-    });
-    const html = await res.text();
-    const match = html.match(/"lastPrice":([\d.]+)/);
-    if (match) {
-      const price = parseFloat(match[1]);
-      if (!isNaN(price) && price > 10000) return price;
-    }
-  } catch (err) {
-    console.warn('[Barchart NQ]', err.message);
-  }
-  return null;
-}
-
-async function fetchYahooPrice(ticker, instrumentKey) {
-  try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1m&range=1d`;
-    const res = await fetch(url);
-    const json = await res.json();
-    if (json.chart && json.chart.result && json.chart.result[0]) {
-      return json.chart.result[0].meta.regularMarketPrice;
-    }
-  } catch (err) {
-    console.warn(`[Yahoo ${instrumentKey}]`, err.message);
-  }
-  return null;
-}
-
-function applyPrice(instrumentKey, price, source) {
-  if (typeof price !== 'number') return;
-  const offset = appState.instruments[instrumentKey].settings.calibrationOffset;
-  appState.instruments[instrumentKey].price = parseFloat((price + offset).toFixed(2));
-  appState.instruments[instrumentKey].priceHistory.push(appState.instruments[instrumentKey].price);
-  if (appState.instruments[instrumentKey].priceHistory.length > 200) {
-    appState.instruments[instrumentKey].priceHistory.shift();
-  }
-}
-
-async function fetchTopstepSettlements() {
-  const result = {};
-  try {
-    const res = await fetch('https://www.topstep.tv/daily-levels', {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' }
-    });
-    const html = await res.text();
-    const settlRegex = /(\d[\d,.]*)\s*SETTLEMENT/g;
-    let match;
-    while ((match = settlRegex.exec(html)) !== null) {
-      const p = parseFloat(match[1].replace(/,/g, ''));
-      if (!isNaN(p)) {
-        if (p > 10000) result.MNQ = p;
-        else if (p > 1000 && p < 10000) result.GCM = p;
-      }
-    }
-    console.log(`[Topstep] NQ=${result.MNQ} GCM=${result.GCM}`);
-  } catch (err) {
-    console.warn('[Topstep]', err.message);
-  }
-  return result;
-}
-
-let topstepRefs = null;
-
-async function fetchAllTopstepRefs() {
-  if (topstepRefs) return topstepRefs;
-  topstepRefs = await fetchTopstepSettlements();
-  if (topstepRefs) {
-    for (const [key, price] of Object.entries(topstepRefs)) {
-      if (appState.instruments[key]) appState.instruments[key].settings.topstepRef = price;
-    }
-  }
-  return topstepRefs;
-}
-
-async function syncNQPrice() {
-  const barchartPrice = await fetchNQFromBarchart();
-  const livePrice = barchartPrice || (await fetchYahooPrice('NQ=F', 'MNQ'));
-  if (!livePrice) return;
-  await fetchAllTopstepRefs();
-  applyPrice('MNQ', livePrice, barchartPrice ? 'Barchart' : 'Yahoo');
-}
-
-async function syncBTCMPrice() {
-  const price = await fetchYahooPrice('BTC-USD', 'BTCM');
-  if (price) { await fetchAllTopstepRefs(); applyPrice('BTCM', price, 'Yahoo'); }
-}
-
-async function syncGCMPrice() {
-  const price = await fetchYahooPrice('GC=F', 'GCM');
-  if (price) { await fetchAllTopstepRefs(); applyPrice('GCM', price, 'Yahoo'); }
-}
-
-function initPriceSync() {
-  syncNQPrice();
-  setInterval(syncNQPrice, 12000);
-  syncBTCMPrice();
-  setInterval(syncBTCMPrice, 15000);
-  syncGCMPrice();
-  setInterval(syncGCMPrice, 15000);
-}
-
-initPriceSync();
-
-// ===== MAIN LOOPS =====
-function startSimulation() {
-  // Price simulation (same as before, updates every second)
-  ['MNQ', 'BTCM', 'GCM'].forEach(instKey => {
-    const inst = appState.instruments[instKey];
-    setInterval(() => {
-      if (inst.priceHistory.length > 0) {
-        const amp = instKey === 'MNQ' ? 0.5 : instKey === 'GCM' ? 0.3 : 2.0;
-        const drift = (inst.price - (inst.priceHistory[inst.priceHistory.length - 1] || inst.price)) * 0.1;
-        const change = (Math.random() - 0.5) * amp + drift;
-        inst.price = parseFloat((inst.price + change).toFixed(2));
-        inst.priceHistory.push(inst.price);
-        if (inst.priceHistory.length > 200) inst.priceHistory.shift();
-        updateActiveSignals(instKey);
-        broadcastState();
-      }
-    }, 1000);
-  });
-
-  // Poll real sources every 5 minutes (300s)
+  // Price loop
   setInterval(async () => {
-    for (const instKey of ['MNQ', 'BTCM', 'GCM']) {
-      await pollRealSources(instKey);
-      if (appState.instruments[instKey].settings.mode === 'simulation') {
-        evaluateConfluence(instKey);
+    for (const coin of topCoins) {
+      const price = await fetchPrice(coin);
+      if (price) {
+        const inst = instruments[coin];
+        inst.price = price;
+        inst.priceHistory.push(price);
+        if (inst.priceHistory.length > 100) inst.priceHistory.shift();
       }
     }
+    checkPositions();
     broadcastState();
-    console.log('[Sources] All 6 real signal providers polled');
-  }, 300000);
+  }, PRICE_POLL_MS);
 
-  // Initial poll after 5s startup delay
-  setTimeout(async () => {
-    for (const instKey of ['MNQ', 'BTCM', 'GCM']) {
-      await pollRealSources(instKey);
-      if (appState.instruments[instKey].settings.mode === 'simulation') {
-        evaluateConfluence(instKey);
-      }
+  // Signal loop
+  setInterval(async () => {
+    for (const coin of topCoins) {
+      await pollSignals(coin);
     }
     broadcastState();
-  }, 5000);
+    console.log('[Signals] All instruments polled');
+  }, SIGNAL_POLL_MS);
+
+  // Initial signal poll
+  setTimeout(async () => {
+    for (const coin of topCoins) {
+      await pollSignals(coin);
+    }
+    broadcastState();
+    console.log('[Init] First signal poll complete');
+  }, 10000);
+
+  // Refresh top 10 every 6 hours
+  setInterval(refreshTop10, 21600000);
 }
 
-startSimulation();
+init();
 
-// ===== API ENDPOINTS =====
+// ===== API =====
+app.get('/api/state', (req, res) => {
+  res.json({ portfolio, topCoins, instruments, telegramConfig: { enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId } });
+});
 
-app.get('/api/state', (req, res) => res.json(appState));
+app.post('/api/binance-config', (req, res) => {
+  const { apiKey, apiSecret } = req.body;
+  if (!apiKey || !apiSecret) return res.status(400).json({ error: 'API key et secret requis' });
+  const ok = initBinance(apiKey, apiSecret);
+  res.json({ success: ok, message: ok ? 'Connecté au testnet Binance' : 'Échec connexion' });
+});
 
-app.post('/api/config/:instrument', (req, res) => {
-  const { instrument } = req.params;
-  if (!appState.instruments[instrument]) return res.status(400).json({ error: 'Instrument inconnu' });
-  const { webhookUrl, stopLossTicks, takeProfitTicks, mode, calibrationOffset, atrMultiplierSL, atrMultiplierTP, accountBalance, riskPercent } = req.body;
-  const instr = appState.instruments[instrument];
-  if (webhookUrl !== undefined) instr.settings.webhookUrl = webhookUrl;
-  if (stopLossTicks !== undefined) instr.settings.stopLossTicks = parseInt(stopLossTicks) || 80;
-  if (takeProfitTicks !== undefined) instr.settings.takeProfitTicks = parseInt(takeProfitTicks) || 160;
-  if (calibrationOffset !== undefined) instr.settings.calibrationOffset = parseFloat(calibrationOffset) || 0;
-  if (atrMultiplierSL !== undefined) instr.settings.atrMultiplierSL = parseFloat(atrMultiplierSL);
-  if (atrMultiplierTP !== undefined) instr.settings.atrMultiplierTP = parseFloat(atrMultiplierTP);
-  if (accountBalance !== undefined) instr.settings.accountBalance = parseFloat(accountBalance) || 100000;
-  if (riskPercent !== undefined) instr.settings.riskPercent = parseFloat(riskPercent) || 1.0;
-  if (mode !== undefined) {
-    instr.settings.mode = mode;
-    if (mode === 'manual') {
-      for (const key of sourceIndicators) instr.sources[key] = 'NEUTRAL';
-      evaluateConfluence(instrument);
-    }
+app.post('/api/reset', (req, res) => {
+  portfolio = { balance: INITIAL_BALANCE, totalPL: 0, winCount: 0, lossCount: 0, tradeCount: 0 };
+  for (const coin of topCoins) {
+    instruments[coin] = createInst(coin);
   }
-  console.log(`[Config ${instrument}]`, instr.settings);
-  broadcastState();
-  res.json({ success: true, settings: instr.settings });
-});
-
-app.post('/api/source/:instrument', (req, res) => {
-  const { instrument } = req.params;
-  const instr = appState.instruments[instrument];
-  if (!instr) return res.status(400).json({ error: 'Instrument inconnu' });
-  const { source, signal } = req.body;
-  if (!sourceIndicators.includes(source) || !['BUY', 'SELL', 'NEUTRAL'].includes(signal)) {
-    return res.status(400).json({ error: 'Source ou signal invalide. Sources: ' + sourceIndicators.join(', ') });
-  }
-  instr.sources[source] = signal;
-  evaluateConfluence(instrument);
-  broadcastState();
-  res.json({ success: true, sources: instr.sources, confluence: instr.confluence });
-});
-
-app.post('/api/test-webhook/:instrument', async (req, res) => {
-  const { instrument } = req.params;
-  const instr = appState.instruments[instrument];
-  if (!instr) return res.status(400).json({ error: 'Instrument inconnu' });
-  const { url } = req.body;
-  if (!url) return res.status(400).json({ error: 'URL manquante.' });
-  try {
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'buy', ticker: instrument, quantity: 1, price: instr.price, comment: 'Test', timestamp: new Date().toISOString() })
-    });
-    res.json({ success: r.ok, message: r.ok ? 'Webhook envoyé' : `HTTP ${r.status}` });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/api/calibrate/:instrument', (req, res) => {
-  const { instrument } = req.params;
-  const instr = appState.instruments[instrument];
-  if (!instr) return res.status(400).json({ error: 'Instrument inconnu' });
-  const { targetPrice } = req.body;
-  if (targetPrice === undefined || isNaN(targetPrice)) return res.status(400).json({ error: 'Prix cible invalide.' });
-  const parsedTarget = parseFloat(targetPrice);
-  instr.price = parsedTarget;
-  instr.priceHistory.push(instr.price);
-  if (instr.priceHistory.length > 200) instr.priceHistory.shift();
-  instr.settings.calibrationOffset = parseFloat((parsedTarget - lastYahooPrice).toFixed(2));
-  broadcastState();
-  res.json({ success: true, price: instr.price, offset: instr.settings.calibrationOffset });
-});
-
-app.post('/api/reset-analytics/:instrument', (req, res) => {
-  const { instrument } = req.params;
-  const instr = appState.instruments[instrument];
-  if (!instr) return res.status(400).json({ error: 'Instrument inconnu' });
-  instr.analytics = { totalSignals: 0, wins: 0, losses: 0, winRate: 0, totalPL: 0, avgReturn: 0, maxDrawdown: 0 };
-  instr.history = [];
   broadcastState();
   res.json({ success: true });
 });
 
-// Manual source override webhook
-app.post('/api/webhook/source', (req, res) => {
-  const { instrument, source, action, price } = req.body;
-  if (!instrument || !source || !action) return res.status(400).json({ error: 'Missing fields' });
-  const instKey = instrument.toUpperCase();
-  if (!appState.instruments[instKey]) return res.status(400).json({ error: 'Unknown instrument' });
-  if (!sourceIndicators.includes(source)) return res.status(400).json({ error: 'Unknown source: ' + source });
-  const signal = action.toUpperCase() === 'BUY' ? 'BUY' : action.toUpperCase() === 'SELL' ? 'SELL' : 'NEUTRAL';
-  appState.instruments[instKey].sources[source] = signal;
-  if (price) appState.instruments[instKey].price = parseFloat(price);
-  evaluateConfluence(instKey);
-  broadcastState();
-  res.json({ success: true, source, signal, confluence: appState.instruments[instKey].confluence });
-});
-
 app.get('/api/telegram-config', (req, res) => {
   res.json({
-    enabled: telegramConfig.enabled,
-    botToken: telegramConfig.botToken ? telegramConfig.botToken.substring(0, 6) + '...' : '',
-    chatId: telegramConfig.chatId || '',
-    hasBotToken: !!telegramConfig.botToken,
-    hasChatId: !!telegramConfig.chatId
+    enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId
   });
 });
 
@@ -832,60 +449,35 @@ app.post('/api/telegram-config', (req, res) => {
   if (enabled !== undefined) telegramConfig.enabled = enabled;
   if (botToken !== undefined) telegramConfig.botToken = botToken;
   if (chatId !== undefined) telegramConfig.chatId = chatId;
-  res.json({
-    success: true,
-    enabled: telegramConfig.enabled,
-    hasBotToken: !!telegramConfig.botToken,
-    hasChatId: !!telegramConfig.chatId
-  });
+  res.json({ success: true, enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId });
 });
 
 app.post('/api/test-telegram', async (req, res) => {
-  if (!telegramConfig.botToken || !telegramConfig.chatId) {
-    return res.status(400).json({ error: 'Bot token ou Chat ID manquant' });
-  }
+  if (!telegramConfig.botToken || !telegramConfig.chatId) return res.status(400).json({ error: 'Config Telegram manquante' });
   try {
-    const url = `https://api.telegram.org/bot${telegramConfig.botToken}/sendMessage`;
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: telegramConfig.chatId,
-        text: '✅ *Lamouchi Lab Desk* — Test réussi !\nLes alertes Telegram fonctionnent correctement.',
-        parse_mode: 'Markdown'
-      })
-    });
-    if (r.ok) {
-      res.json({ success: true, message: 'Message Telegram envoyé !' });
-    } else {
-      const err = await r.text();
-      res.status(400).json({ error: 'Telegram API: ' + err.substring(0, 200) });
-    }
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+    await sendTelegramNotif('✅ *Lamouchi Lab Desk* — Bot quant connecté !');
+    res.json({ success: true, message: 'Message envoyé' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+app.get('/health', (req, res) => res.json({ status: 'ok', coins: topCoins.length, time: new Date().toISOString() }));
 
 app.get('/api/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
-  const state = { instruments: appState.instruments, telegramConfig: { enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId } };
-  res.write(`data: ${JSON.stringify(state)}\n\n`);
+  res.write(`data: ${JSON.stringify({ portfolio, topCoins, instruments, telegramConfig: { enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId } })}\n\n`);
   clients.push(res);
-  req.on('close', () => {
-    clients = clients.filter(c => c !== res);
-  });
+  req.on('close', () => { clients = clients.filter(c => c !== res); });
 });
 
 app.listen(PORT, () => {
   console.log(`================================================================`);
-  console.log(`   LAMOUCHI LAB DESK - Chef-d'oeuvre`);
+  console.log(`   LAMOUCHI LAB DESK v2 — Quant Bot`);
   console.log(`   http://localhost:${PORT}`);
-   console.log(`   Signaux: Investing.com + TradingView + Topstep + Fear & Greed + CoinGecko + Binance L/S`);
-   console.log(`   Notifications: Telegram | SL/TP: ATR dynamique | P&L: Auto | Seuil: 2/6 sources`);
+  console.log(`   Balance: $${INITIAL_BALANCE} | Risque: $${RISK_PER_TRADE}/trade | Top 10 + PAXG`);
+  console.log(`   Signaux: TradingView + Fear&Greed + RSI + EMA`);
+  console.log(`   Notifications: Telegram`);
   console.log(`================================================================`);
 });

@@ -4,10 +4,18 @@
   <meta charset="UTF-8" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Lamouchi Lab Desk</title>
+  <title>Lamouchi Lab Desk — Quant Bot</title>
   <link rel="preconnect" href="https://fonts.gstatic.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css" />
+  <style>
+    .portfolio-bar { display:flex; gap:16px; padding:12px 16px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:8px; margin-bottom:16px; flex-wrap:wrap; }
+    .pf-item { display:flex; flex-direction:column; min-width:80px; }
+    .pf-label { font-size:9px; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px; }
+    .pf-value { font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; color:var(--text); }
+    .ctrl-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .ctrl-row button { font-size:11px; padding:6px 12px; }
+  </style>
 </head>
 <body>
   <canvas id="particle-canvas"></canvas>
@@ -20,55 +28,31 @@
           <div class="brand-icon">◈</div>
           <div class="brand-text">
             <h1>LAMOUCHI LAB</h1>
-            <span class="brand-sub">DESK · CHEF-D'OEUVRE</span>
+            <span class="brand-sub">QUANT BOT · TOP 10 + GOLD</span>
           </div>
         </div>
         <div class="header-status">
           <div class="status-item">
             <span class="status-dot live" id="connection-status"></span>
-            <span class="status-label">SYNC</span>
+            <span class="status-label">LIVE</span>
           </div>
           <div class="status-item">
             <span id="clock" class="clock">--:--:--</span>
           </div>
         </div>
       </div>
+      <div class="portfolio-bar" id="portfolio-bar">
+        <div class="pf-item"><span class="pf-label">Balance</span><span class="pf-value" id="pf-balance">$200</span></div>
+        <div class="pf-item"><span class="pf-label">P&L Total</span><span class="pf-value" id="pf-pl">$0.00</span></div>
+        <div class="pf-item"><span class="pf-label">Winrate</span><span class="pf-value" id="pf-wr">0%</span></div>
+        <div class="pf-item"><span class="pf-label">Trades</span><span class="pf-value" id="pf-trades">0</span></div>
+      </div>
       <div class="header-controls">
-        <div class="control-group">
-          <label class="ctrl-label">INSTRUMENT</label>
-          <select id="instrument-select" class="ctrl-select">
-            <option value="MNQ">MNQ / NASDAQ</option>
-            <option value="BTCM">BTCM / BITCOIN</option>
-            <option value="GCM">GCM / GOLD</option>
-          </select>
+        <div class="ctrl-row">
+          <button id="telegram-toggle-btn" class="ctrl-btn" style="background:linear-gradient(135deg,rgba(0,136,204,0.1),rgba(0,136,204,0.05));border-color:rgba(0,136,204,0.3);color:#0088cc;font-size:11px;padding:6px 12px;">⚙ TELEGRAM</button>
+          <button id="reset-btn" class="ctrl-btn" style="font-size:11px;padding:6px 12px;color:var(--text-muted);border-color:rgba(255,255,255,0.1);">⟳ RESET</button>
+          <span id="reset-status" style="font-size:10px;color:var(--text-muted)"></span>
         </div>
-        <form id="config-form" data-instrument="MNQ" class="config-form">
-          <div class="control-group">
-            <label class="ctrl-label">WEBHOOK</label>
-            <input type="url" name="webhookUrl" class="ctrl-input" placeholder="https://..." style="min-width:160px" />
-          </div>
-          <div class="control-group">
-            <label class="ctrl-label">SL MULT (ATR)</label>
-            <input type="number" name="atrMultiplierSL" class="ctrl-input" min="0.5" max="5" step="0.1" value="1.5" style="min-width:70px" />
-          </div>
-          <div class="control-group">
-            <label class="ctrl-label">TP MULT (ATR)</label>
-            <input type="number" name="atrMultiplierTP" class="ctrl-input" min="1" max="10" step="0.1" value="3.0" style="min-width:70px" />
-          </div>
-          <div class="control-group">
-            <label class="ctrl-label">MODE</label>
-            <select name="mode" class="ctrl-select">
-              <option value="simulation" selected>AUTO (TA)</option>
-              <option value="manual">MANUEL</option>
-            </select>
-          </div>
-          <div class="control-group">
-            <label class="ctrl-label">OFFSET</label>
-            <input type="number" step="0.01" name="calibrationOffset" class="ctrl-input" placeholder="0" style="min-width:70px" />
-          </div>
-          <button type="submit" class="ctrl-btn">APPLIQUER</button>
-        </form>
-        <button id="telegram-toggle-btn" class="ctrl-btn email-btn" style="background:linear-gradient(135deg,rgba(0,136,204,0.1),rgba(0,136,204,0.05));border-color:rgba(0,136,204,0.3);color:#0088cc;">⚙ TELEGRAM</button>
       </div>
     </header>
 
@@ -101,12 +85,12 @@
     </div>
 
     <section class="grid-dashboard" id="dashboard">
-      <!-- Cards are generated by JS -->
+      <!-- Cards generated by JS -->
     </section>
 
     <footer class="footer">
-      <span class="footer-left">◈ LAMOUCHI LAB DESK</span>
-      <span class="footer-right">INVESTING.COM + TOPSTEP + FEAR &amp; GREED + COINGECKO · ATR SL/TP · CONFLUENCE</span>
+      <span class="footer-left">◈ LAMOUCHI LAB DESK v2 — QUANT BOT</span>
+      <span class="footer-right">TV + FEAR&GREED + RSI + EMA · \$200 BALANCE · \$15 RISK/TRADE</span>
     </footer>
   </div>
 
