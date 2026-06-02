@@ -195,12 +195,13 @@ async function binanceRequest(endpoint, params = {}, baseUrl = DEMO_API) {
 
   async function fetchAllPrices() {
     const prices = {};
-    // Binance exchange info gives all symbols in one call
-    const allSymbols = ['BTCUSDT','ETHUSDT','BNBUSDT','XRPUSDT','SOLUSDT','ADAUSDT','DOGEUSDT','AVAXUSDT','DOTUSDT','LINKUSDT','PAXGUSDT'];
+    const symbols = ['BTCUSDT','ETHUSDT','BNBUSDT','XRPUSDT','SOLUSDT','ADAUSDT','DOGEUSDT','AVAXUSDT','DOTUSDT','LINKUSDT','PAXGUSDT'];
+    // Try batch call (faster, 1 request)
     for (const base of ['https://api.binance.com', DEMO_API]) {
       try {
-        const syms = allSymbols.map(s => '"' + s + '"').join(',');
-        const res = await fetch(base + '/api/v3/ticker/price?symbols=[' + syms + ']');
+        const params = new URLSearchParams();
+        params.set('symbols', JSON.stringify(symbols));
+        const res = await fetch(base + '/api/v3/ticker/price?' + params.toString());
         if (res.status === 200) {
           const arr = await res.json();
           if (Array.isArray(arr)) {
@@ -209,22 +210,27 @@ async function binanceRequest(endpoint, params = {}, baseUrl = DEMO_API) {
               const p = parseFloat(item.price);
               if (!isNaN(p) && p > 0) prices[coin] = p;
             }
-            return prices;
+            if (Object.keys(prices).length > 0) return prices;
           }
         }
       } catch {}
     }
-    // Fallback: individual calls
-    for (const sym of allSymbols) {
-      for (const base of ['https://api.binance.com', DEMO_API]) {
-        try {
-          const res = await fetch(base + '/api/v3/ticker/price?symbol=' + sym);
-          if (res.status !== 200) continue;
-          const json = await res.json();
-          const p = parseFloat(json.price);
-          if (!isNaN(p) && p > 0) { prices[sym.replace('USDT', '')] = p; break; }
-        } catch {}
+    // Fallback: parallel individual calls
+    const bases = ['https://api.binance.com', DEMO_API];
+    for (const base of bases) {
+      const results = await Promise.allSettled(symbols.map(sym =>
+        fetch(base + '/api/v3/ticker/price?symbol=' + sym).then(r => r.json())
+      ));
+      for (let i = 0; i < symbols.length; i++) {
+        const sym = symbols[i];
+        const r = results[i];
+        if (r.status === 'fulfilled' && r.value && r.value.price) {
+          const coin = sym.replace('USDT', '');
+          const p = parseFloat(r.value.price);
+          if (!isNaN(p) && p > 0) prices[coin] = p;
+        }
       }
+      if (Object.keys(prices).length > 0) return prices;
     }
     return prices;
   }
@@ -631,12 +637,14 @@ app.get('/api/state', (req, res) => {
 });
 
 app.get('/api/debug', async (req, res) => {
-  const result = { fetchAllPrices: null, error: null, cgNames: null, cgRaw: null };
+  const result = {};
   try {
-    result.cgNames = CG_NAMES;
-    const cgRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=' + CG_NAMES + '&vs_currencies=usd');
-    result.cgStatus = cgRes.status;
-    result.cgRaw = await cgRes.json();
+    // Test Binance batch
+    const binRes = await fetch('https://api.binance.com/api/v3/ticker/price?symbols=[\"BTCUSDT\",\"ETHUSDT\"]');
+    result.binanceBatch = binRes.status === 200 ? await binRes.json() : 'status=' + binRes.status;
+    // Test individual Binance
+    const btcRes = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT');
+    result.binanceSingle = btcRes.status === 200 ? await btcRes.json() : 'status=' + btcRes.status;
     result.fetchAllPrices = await fetchAllPrices();
   } catch (e) { result.error = e.message; }
   res.json(result);
