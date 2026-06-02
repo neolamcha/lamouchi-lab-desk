@@ -10,8 +10,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 const PORT = process.env.PORT || 3000;
 const INITIAL_BALANCE = 5000;
 const RISK_PER_TRADE = 30;
-const SIGNAL_POLL_MS = 60000;
-const PRICE_POLL_MS = 30000;
+const SIGNAL_POLL_MS = 30000;
+const PRICE_POLL_MS = 5000;
 const SCALP_SL_ATR = 0.8;
 const SCALP_TP_ATR = 1.5;
 
@@ -359,6 +359,16 @@ async function pollSignals(coin) {
 }
 
 // ===== POSITION SIZING =====
+function calcATR(prices) {
+  // Simplified ATR using price range over last 14 periods
+  const n = Math.min(prices.length, 14);
+  let sum = 0;
+  for (let i = 1; i < n; i++) {
+    sum += Math.abs(prices[i] - prices[i-1]);
+  }
+  return sum / Math.max(n - 1, 1);
+}
+
 function computeSLTP(price, side, atr) {
   const slDist = Math.max(atr * SCALP_SL_ATR, price * 0.002);
   const tpDist = Math.max(atr * SCALP_TP_ATR, price * 0.006);
@@ -410,7 +420,7 @@ async function executeTrade(coin, side) {
   if (inst.position) return;
 
   const price = inst.price;
-  const atr = inst.priceHistory.length > 14 ? calcRSI(inst.priceHistory) * price * 0.002 : price * 0.01;
+  const atr = inst.priceHistory.length > 14 ? calcATR(inst.priceHistory) : price * 0.01;
   const { sl, tp } = computeSLTP(price, side, atr);
   const qty = calcSize(coin, price, sl);
   if (qty <= 0) return;
