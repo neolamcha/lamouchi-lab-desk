@@ -5,7 +5,16 @@ services:
     buildCommand: npm install
     startCommand: node server.js
     envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: quantbot-db
+          property: connectionString
       - key: TELEGRAM_BOT_TOKEN
         value: ""
       - key: TELEGRAM_CHAT_ID
         value: ""
+
+databases:
+  - name: quantbot-db
+    databaseName: quantbot
+    plan: free

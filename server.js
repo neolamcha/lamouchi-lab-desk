@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const ccxt = require('ccxt');
+const db = require('./db');
 
 const app = express();
 app.use(express.json());
@@ -348,6 +349,7 @@ async function executeTrade(coin, side) {
   };
 
   console.log(`[TRADE] ${side} ${coin} @ ${price} x${qty} | SL: ${sl.toFixed(2)} TP: ${tp.toFixed(2)}`);
+  db.saveInstruments(instruments);
 
   if (telegramConfig.enabled) {
     sendTelegramNotif(`🟢 *${side} ${coin}* @ $${price.toFixed(2)} x${qty}\nSL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}`);
@@ -384,6 +386,9 @@ async function closePosition(coin, reason) {
 
   inst.history.unshift(pos);
   inst.position = null;
+
+  db.savePortfolio(portfolio);
+  db.saveInstruments(instruments);
 
   console.log(`[CLOSE] ${coin} ${pos.side} @ ${exitPrice.toFixed(2)} | PnL: $${plDollars.toFixed(2)} | ${reason}`);
 
@@ -441,18 +446,64 @@ async function sendTelegramNotif(text) {
 
 // ===== INIT =====
 async function init() {
+  const hasDB = db.initDB();
+  if (hasDB) await db.setup();
+
+  // Load persisted state from DB
+  if (hasDB) {
+    const savedPortfolio = await db.loadPortfolio();
+    if (savedPortfolio) {
+      portfolio.balance = savedPortfolio.balance;
+      portfolio.initialBalance = savedPortfolio.initialBalance;
+      portfolio.totalPL = savedPortfolio.totalPL;
+      portfolio.winCount = savedPortfolio.winCount;
+      portfolio.lossCount = savedPortfolio.lossCount;
+      portfolio.tradeCount = savedPortfolio.tradeCount;
+      console.log('[DB] Portfolio restored');
+    }
+    const savedTelegram = await db.loadTelegram();
+    if (savedTelegram) {
+      telegramConfig.enabled = savedTelegram.enabled;
+      telegramConfig.botToken = savedTelegram.botToken || '';
+      telegramConfig.chatId = savedTelegram.chatId || '';
+      console.log('[DB] Telegram config restored');
+    }
+    const savedKeys = await db.loadDemoKeys();
+    if (savedKeys) {
+      demoApiKey = savedKeys.apiKey || '';
+      demoApiSecret = savedKeys.apiSecret || '';
+      console.log('[DB] Demo keys restored');
+    }
+  }
+
   await refreshTop10();
   for (const coin of topCoins) {
     instruments[coin] = createInst(coin);
   }
   loadKeys();
 
-  // Snapshot initial demo balance — bot tracks own PnL from there
+  // Restore open positions from DB
+  if (hasDB) {
+    const savedInsts = await db.loadInstruments();
+    if (savedInsts) {
+      for (const [coin, data] of Object.entries(savedInsts)) {
+        if (instruments[coin]) {
+          if (data.position) instruments[coin].position = data.position;
+          if (data.history) instruments[coin].history = data.history;
+          if (data.analytics) instruments[coin].analytics = data.analytics;
+        }
+      }
+      console.log('[DB] Positions restored');
+    }
+  }
+
+  // Snapshot initial demo balance
   setTimeout(async () => {
     const bal = await demoBalance();
-    if (bal != null) {
+    if (bal != null && !portfolio.initialBalance) {
       portfolio.initialBalance = parseFloat(bal.toFixed(2));
       portfolio.balance = portfolio.initialBalance;
+      if (hasDB) db.savePortfolio(portfolio);
     }
   }, 5000);
 
@@ -504,6 +555,7 @@ app.post('/api/binance-config', (req, res) => {
   const { apiKey, apiSecret } = req.body;
   if (!apiKey || !apiSecret) return res.status(400).json({ error: 'API key et secret requis' });
   const ok = initDemoAPI(apiKey, apiSecret);
+  db.saveDemoKeys(apiKey, apiSecret);
   res.json({ success: ok, message: ok ? 'Connecté au Binance Demo' : 'Échec connexion' });
 });
 
@@ -527,6 +579,7 @@ app.post('/api/telegram-config', (req, res) => {
   if (enabled !== undefined) telegramConfig.enabled = enabled;
   if (botToken !== undefined) telegramConfig.botToken = botToken;
   if (chatId !== undefined) telegramConfig.chatId = chatId;
+  db.saveTelegram(telegramConfig);
   res.json({ success: true, enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId });
 });
 

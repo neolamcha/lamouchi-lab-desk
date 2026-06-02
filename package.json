@@ -10,6 +10,7 @@
   "dependencies": {
     "ccxt": "^4.5.56",
     "express": "^4.19.2",
-    "nodemailer": "^8.0.10"
+    "nodemailer": "^8.0.10",
+    "pg": "^8.21.0"
   }
 }

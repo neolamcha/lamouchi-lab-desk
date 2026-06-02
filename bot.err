@@ -50,3 +50,25 @@ Emitted 'error' event on Server instance at:
 }
 
 Node.js v24.16.0
+/Users/macbook/Documents/antigravity/quirky-borg/server.js:338
+  const atr = inst.priceHistory.length > 14 ? calcRSI(inst.priceHistory) * price * 0.002 : price * 0.01;
+                                       ^
+
+ReferenceError: calcRSI is not defined
+    at executeTrade (/Users/macbook/Documents/antigravity/quirky-borg/server.js:338:40)
+    at pollSignals (/Users/macbook/Documents/antigravity/quirky-borg/server.js:310:21)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Timeout._onTimeout (/Users/macbook/Documents/antigravity/quirky-borg/server.js:477:7)
+
+Node.js v24.16.0
+/Users/macbook/Documents/antigravity/quirky-borg/server.js:338
+  const atr = inst.priceHistory.length > 14 ? calcRSI(inst.priceHistory) * price * 0.002 : price * 0.01;
+                                       ^
+
+ReferenceError: calcRSI is not defined
+    at executeTrade (/Users/macbook/Documents/antigravity/quirky-borg/server.js:338:40)
+    at pollSignals (/Users/macbook/Documents/antigravity/quirky-borg/server.js:310:21)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Timeout._onTimeout (/Users/macbook/Documents/antigravity/quirky-borg/server.js:477:7)
+
+Node.js v24.16.0
