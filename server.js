@@ -68,7 +68,7 @@ async function apiFetch(path) {
     try {
       const res = await fetch(`${base}${path}`);
       if (res.status === 200) return await res.json();
-    } catch {}
+    } catch (e) { console.warn(`[API ${base}]`, e.message); }
   }
   return null;
 }
@@ -207,21 +207,15 @@ const CG_IDS = {
 };
 
 async function fetchPrice(coin) {
-  // Try Binance (demo first, then production)
-  const urls = [
-    `https://api.binance.com/api/v3/ticker/price?symbol=${coin}USDT`,
-    `${DEMO_API}/api/v3/ticker/price?symbol=${coin}USDT`
-  ];
-  for (const url of urls) {
-    try {
-      const res = await fetch(url);
-      if (res.status === 200) {
-        const json = await res.json();
-        const p = parseFloat(json.price);
-        if (!isNaN(p) && p > 0) return p;
-      }
-    } catch {}
-  }
+  // Try Binance production API first
+  try {
+    const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${coin}USDT`);
+    if (res.status === 200) {
+      const json = await res.json();
+      const p = parseFloat(json.price);
+      if (!isNaN(p) && p > 0) return p;
+    }
+  } catch (e) { console.warn(`[Price ${coin}] Binance:`, e.message); }
   // Fallback: CoinGecko
   const cgId = CG_IDS[coin];
   if (cgId) {
@@ -232,8 +226,9 @@ async function fetchPrice(coin) {
         const p = parseFloat(json[cgId]?.usd);
         if (!isNaN(p) && p > 0) return p;
       }
-    } catch {}
+    } catch (e) { console.warn(`[Price ${coin}] CoinGecko:`, e.message); }
   }
+  console.warn(`[Price ${coin}] All sources failed`);
   return null;
 }
 
