@@ -100,7 +100,7 @@ function buildCards(data) {
         <div class="price-section">
           <div class="price-main">
             <span class="price-label">PRIX</span>
-            <span class="price-value" id="price-${coin}">${inst.price > 0 ? '$' + inst.price.toFixed(inst.price > 100 ? 2 : inst.price > 1 ? 4 : 6) : '--'}</span>
+            <span class="price-value" id="price-${coin}">${inst.price > 0 ? '$' + inst.price.toFixed(inst.price > 1000 ? 2 : inst.price > 1 ? 4 : 6) : '--'}</span>
           </div>
           <div class="confluence-section">
             <span class="price-label">SCORE</span>
@@ -123,6 +123,9 @@ function buildCards(data) {
 function updateState(data) {
   buildPortfolio(data);
   buildCards(data);
+  const now = new Date();
+  const el = document.getElementById('last-update');
+  if (el) el.textContent = now.toLocaleTimeString('fr-FR');
 }
 
 // ===== SSE =====
