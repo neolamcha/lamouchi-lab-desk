@@ -9,8 +9,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 const PORT = process.env.PORT || 3000;
 const INITIAL_BALANCE = 200;
 const RISK_PER_TRADE = 15;
-const SIGNAL_POLL_MS = 300000;
-const PRICE_POLL_MS = 10000;
+const SIGNAL_POLL_MS = 60000;
+const PRICE_POLL_MS = 5000;
+const SCALP_SL_ATR = 0.8;
+const SCALP_TP_ATR = 1.5;
 
 // ===== SIGNAL SOURCES =====
 // 1. Fear & Greed Index (global)
@@ -251,14 +253,34 @@ function calcConfluence(inst) {
     if (inst.sources[k] === 'BUY') score += w;
     else if (inst.sources[k] === 'SELL') score -= w;
   }
+
+  // Momentum boost: price moved >0.15% = extra conviction
+  const ph = inst.priceHistory;
+  if (ph.length >= 6) {
+    const pNow = ph[ph.length - 1];
+    const pPrev = ph[Math.max(0, ph.length - 12)];
+    if (pNow && pPrev) {
+      const chg = Math.abs((pNow - pPrev) / pPrev);
+      if (chg > 0.0015) {
+        const boost = chg > 0.003 ? 0.8 : 0.4;
+        if (score > 0) score += boost;
+        else if (score < 0) score -= boost;
+      }
+    }
+  }
+
   inst.confluenceScore = parseFloat(score.toFixed(2));
-  const threshold = maxP * 0.3;
+  const threshold = maxP * 0.15;
   let conf = 'NEUTRAL';
   if (score >= threshold) conf = 'BUY';
   else if (score <= -threshold) conf = 'SELL';
   const prev = inst.confluence;
   inst.confluence = conf;
-  if (conf !== 'NEUTRAL' && prev === 'NEUTRAL') return conf;
+
+  // Aggressive: trigger on any new signal, flip on opposite
+  if (conf === 'NEUTRAL') return null;
+  if (prev === 'NEUTRAL') return conf;
+  if (prev !== conf) return conf;
   return null;
 }
 
@@ -289,9 +311,8 @@ async function pollSignals(coin) {
 
 // ===== POSITION SIZING =====
 function computeSLTP(price, side, atr) {
-  const slMult = 1.5, tpMult = 3.0;
-  const slDist = Math.max(atr * slMult, price * 0.005);
-  const tpDist = Math.max(atr * tpMult, price * 0.015);
+  const slDist = Math.max(atr * SCALP_SL_ATR, price * 0.002);
+  const tpDist = Math.max(atr * SCALP_TP_ATR, price * 0.006);
   if (side === 'BUY') {
     return { sl: price - slDist, tp: price + tpDist };
   }
@@ -458,7 +479,7 @@ async function init() {
       await pollSignals(coin);
     }
     broadcastState();
-    console.log('[Signals] All instruments polled');
+    console.log('[Scalp] All instruments polled (60s)');
   }, SIGNAL_POLL_MS);
 
   // Initial signal poll
@@ -535,7 +556,7 @@ app.listen(PORT, () => {
   console.log(`================================================================`);
   console.log(`   LAMOUCHI LAB DESK v2 — Quant Bot`);
   console.log(`   http://localhost:${PORT}`);
-  console.log(`   Balance: $${INITIAL_BALANCE} | Risque: $${RISK_PER_TRADE}/trade | Top 10 + PAXG`);
+   console.log(`   Balance: $${INITIAL_BALANCE} | Risque: $${RISK_PER_TRADE}/trade | Top 10 + PAXG | SCALP 0.8/1.5 ATR`);
    console.log(`   Signaux: TradingView + Fear&Greed + DOM + OrderFlow + VWAP`);
   console.log(`   Notifications: Telegram`);
   console.log(`================================================================`);
