@@ -2,3 +2,5 @@ node_modules/
 .codex/
 .env
 .DS_Store
+*.log
+*.err
