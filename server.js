@@ -193,14 +193,32 @@ async function binanceRequest(endpoint, params = {}, baseUrl = DEMO_API) {
   return JSON.parse(txt);
 }
 
+  const COINBASE_IDS = {
+    BTC: 'BTC', ETH: 'ETH', BNB: 'BNB', XRP: 'XRP', SOL: 'SOL',
+    ADA: 'ADA', DOGE: 'DOGE', AVAX: 'AVAX', DOT: 'DOT', LINK: 'LINK',
+    PAXG: 'PAXG'
+  };
   async function fetchAllPrices() {
     const prices = {};
-    const symbols = ['BTCUSDT','ETHUSDT','BNBUSDT','XRPUSDT','SOLUSDT','ADAUSDT','DOGEUSDT','AVAXUSDT','DOTUSDT','LINKUSDT','PAXGUSDT'];
-    // Try batch call (faster, 1 request)
+    // 1. Coinbase (parallel, most reliable)
+    const cbResults = await Promise.allSettled(
+      Object.entries(COINBASE_IDS).map(([coin, cbId]) =>
+        fetch('https://api.coinbase.com/v2/prices/' + cbId + '-USD/spot')
+          .then(r => r.json())
+          .then(j => ({ coin, price: parseFloat(j?.data?.amount) }))
+      )
+    );
+    for (const r of cbResults) {
+      if (r.status === 'fulfilled' && r.value && !isNaN(r.value.price) && r.value.price > 0)
+        prices[r.value.coin] = r.value.price;
+    }
+    if (Object.keys(prices).length >= 8) return prices;
+
+    // 2. Binance fallback
     for (const base of ['https://api.binance.com', DEMO_API]) {
       try {
         const params = new URLSearchParams();
-        params.set('symbols', JSON.stringify(symbols));
+        params.set('symbols', JSON.stringify(Object.keys(COINBASE_IDS).map(c => c + 'USDT')));
         const res = await fetch(base + '/api/v3/ticker/price?' + params.toString());
         if (res.status === 200) {
           const arr = await res.json();
@@ -210,27 +228,22 @@ async function binanceRequest(endpoint, params = {}, baseUrl = DEMO_API) {
               const p = parseFloat(item.price);
               if (!isNaN(p) && p > 0) prices[coin] = p;
             }
-            if (Object.keys(prices).length > 0) return prices;
+            if (Object.keys(prices).length >= 8) return prices;
           }
         }
       } catch {}
     }
-    // Fallback: parallel individual calls
-    const bases = ['https://api.binance.com', DEMO_API];
-    for (const base of bases) {
-      const results = await Promise.allSettled(symbols.map(sym =>
-        fetch(base + '/api/v3/ticker/price?symbol=' + sym).then(r => r.json())
-      ));
-      for (let i = 0; i < symbols.length; i++) {
-        const sym = symbols[i];
-        const r = results[i];
-        if (r.status === 'fulfilled' && r.value && r.value.price) {
-          const coin = sym.replace('USDT', '');
-          const p = parseFloat(r.value.price);
-          if (!isNaN(p) && p > 0) prices[coin] = p;
-        }
-      }
-      if (Object.keys(prices).length > 0) return prices;
+
+    // 3. Kraken/others individual fallback
+    const kraken = { BTC: 'XBTUSDT', ETH: 'ETHUSDT' };
+    for (const [coin, pair] of Object.entries(kraken)) {
+      if (prices[coin]) continue;
+      try {
+        const r = await fetch('https://api.kraken.com/0/public/Ticker?pair=' + pair);
+        const j = await r.json();
+        const last = parseFloat(j?.result?.[pair]?.c?.[0]);
+        if (!isNaN(last) && last > 0) prices[coin] = last;
+      } catch {}
     }
     return prices;
   }
@@ -639,12 +652,19 @@ app.get('/api/state', (req, res) => {
 app.get('/api/debug', async (req, res) => {
   const result = {};
   try {
-    // Test Binance batch
-    const binRes = await fetch('https://api.binance.com/api/v3/ticker/price?symbols=[\"BTCUSDT\",\"ETHUSDT\"]');
-    result.binanceBatch = binRes.status === 200 ? await binRes.json() : 'status=' + binRes.status;
-    // Test individual Binance
-    const btcRes = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT');
-    result.binanceSingle = btcRes.status === 200 ? await btcRes.json() : 'status=' + btcRes.status;
+    const tests = [
+      ['coinbase', 'https://api.coinbase.com/v2/prices/BTC-USD/spot'],
+      ['kraken', 'https://api.kraken.com/0/public/Ticker?pair=XBTUSDT'],
+      ['bitstamp', 'https://www.bitstamp.net/api/v2/ticker/btcusd/'],
+      ['binance', 'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT']
+    ];
+    for (const [name, url] of tests) {
+      try {
+        const r = await fetch(url);
+        result[name] = 'status=' + r.status;
+        if (r.status === 200) result[name + '_body'] = (await r.json().catch(() => '?')).toString().substring(0, 100);
+      } catch (e) { result[name] = e.message; }
+    }
     result.fetchAllPrices = await fetchAllPrices();
   } catch (e) { result.error = e.message; }
   res.json(result);
