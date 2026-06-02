@@ -134,7 +134,7 @@ const COIN_MAP = {
 
 let topCoins = [];
 
-const ALL_COINS = ['BTC', 'ETH', 'BNB', 'XRP', 'SOL', 'ADA', 'DOGE', 'AVAX', 'DOT', 'LINK', 'PAXG', 'XLM', 'TRX', 'HYPE'];
+const ALL_COINS = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA'];
 
 async function refreshTop10() {
   // Use fixed list: all coins we support
@@ -185,9 +185,7 @@ async function binanceRequest(endpoint, params = {}, baseUrl = DEMO_API) {
 }
 
   const COINBASE_IDS = {
-    BTC: 'BTC', ETH: 'ETH', BNB: 'BNB', XRP: 'XRP', SOL: 'SOL',
-    ADA: 'ADA', DOGE: 'DOGE', AVAX: 'AVAX', DOT: 'DOT', LINK: 'LINK',
-    PAXG: 'PAXG', XLM: 'XLM', TRX: 'TRX', HYPE: 'HYPE'
+    BTC: 'BTC', ETH: 'ETH', BNB: 'BNB', SOL: 'SOL', XRP: 'XRP', ADA: 'ADA'
   };
   async function fetchAllPrices() {
     const prices = {};
