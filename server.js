@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 const INITIAL_BALANCE = 5000;
 const RISK_PER_TRADE = 15;
 const SIGNAL_POLL_MS = 60000;
-const PRICE_POLL_MS = 5000;
+const PRICE_POLL_MS = 30000;
 const SCALP_SL_ATR = 0.8;
 const SCALP_TP_ATR = 1.5;
 
@@ -193,35 +193,36 @@ async function binanceRequest(endpoint, params = {}, baseUrl = DEMO_API) {
   return JSON.parse(txt);
 }
 
-  const CG_ID_MAP = [
-    ['BTC', 'bitcoin'], ['ETH', 'ethereum'], ['BNB', 'binancecoin'], ['XRP', 'ripple'],
-    ['SOL', 'solana'], ['ADA', 'cardano'], ['DOGE', 'dogecoin'], ['AVAX', 'avalanche-2'],
-    ['DOT', 'polkadot'], ['LINK', 'chainlink'], ['PAXG', 'pax-gold']
-  ];
-  const CG_NAMES = CG_ID_MAP.map(p => p[1]).join(',');
-
   async function fetchAllPrices() {
     const prices = {};
-    try {
-      const url = 'https://api.coingecko.com/api/v3/simple/price?ids=' + CG_NAMES + '&vs_currencies=usd';
-      const res = await fetch(url);
-      if (res.status === 200) {
-        const json = await res.json();
-        for (const [sym, cgId] of CG_ID_MAP) {
-          const p = parseFloat(json[cgId]?.usd);
-          if (!isNaN(p) && p > 0) prices[sym] = p;
+    // Binance exchange info gives all symbols in one call
+    const allSymbols = ['BTCUSDT','ETHUSDT','BNBUSDT','XRPUSDT','SOLUSDT','ADAUSDT','DOGEUSDT','AVAXUSDT','DOTUSDT','LINKUSDT','PAXGUSDT'];
+    for (const base of ['https://api.binance.com', DEMO_API]) {
+      try {
+        const syms = allSymbols.map(s => '"' + s + '"').join(',');
+        const res = await fetch(base + '/api/v3/ticker/price?symbols=[' + syms + ']');
+        if (res.status === 200) {
+          const arr = await res.json();
+          if (Array.isArray(arr)) {
+            for (const item of arr) {
+              const coin = item.symbol.replace('USDT', '');
+              const p = parseFloat(item.price);
+              if (!isNaN(p) && p > 0) prices[coin] = p;
+            }
+            return prices;
+          }
         }
-      }
-    } catch (e) { console.warn('[Price] CoinGecko:', e.message); }
-    for (const [sym] of CG_ID_MAP) {
-      if (prices[sym]) continue;
+      } catch {}
+    }
+    // Fallback: individual calls
+    for (const sym of allSymbols) {
       for (const base of ['https://api.binance.com', DEMO_API]) {
         try {
-          const res = await fetch(base + '/api/v3/ticker/price?symbol=' + sym + 'USDT');
+          const res = await fetch(base + '/api/v3/ticker/price?symbol=' + sym);
           if (res.status !== 200) continue;
           const json = await res.json();
           const p = parseFloat(json.price);
-          if (!isNaN(p) && p > 0) { prices[sym] = p; break; }
+          if (!isNaN(p) && p > 0) { prices[sym.replace('USDT', '')] = p; break; }
         } catch {}
       }
     }
