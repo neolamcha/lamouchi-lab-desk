@@ -630,6 +630,14 @@ app.get('/api/state', (req, res) => {
   res.json({ portfolio, topCoins, instruments, telegramConfig: { enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId } });
 });
 
+app.get('/api/debug', async (req, res) => {
+  const result = { fetchAllPrices: null, error: null };
+  try {
+    result.fetchAllPrices = await fetchAllPrices();
+  } catch (e) { result.error = e.message; }
+  res.json(result);
+});
+
 app.post('/api/binance-config', (req, res) => {
   const { apiKey, apiSecret } = req.body;
   if (!apiKey || !apiSecret) return res.status(400).json({ error: 'API key et secret requis' });
