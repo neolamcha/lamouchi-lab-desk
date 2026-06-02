@@ -42,10 +42,12 @@ const instruments = [
 ];
 
 const sourceMeta = [
-  { key: 'investing', label: 'Investing.com' },
+  { key: 'investing', label: 'Investing' },
+  { key: 'tradingview', label: 'TradingView' },
   { key: 'topstep', label: 'Topstep' },
-  { key: 'feargreed', label: 'Fear & Greed' },
-  { key: 'coingecko', label: 'CoinGecko' }
+  { key: 'feargreed', label: 'Fear&Greed' },
+  { key: 'coingecko', label: 'CoinGecko' },
+  { key: 'btcls', label: 'Binance L/S' }
 ];
 
 // ========== BUILD CARDS ==========
@@ -85,9 +87,13 @@ function buildCards() {
         </div>
           <div class="indicators-row">
           <div class="indicator-item"><span class="ind-label">Investing</span><span id="sig-investing-${inst.key}" class="ind-value">--</span></div>
+          <div class="indicator-item"><span class="ind-label">TradingView</span><span id="sig-tradingview-${inst.key}" class="ind-value">--</span></div>
           <div class="indicator-item"><span class="ind-label">Topstep</span><span id="sig-topstep-${inst.key}" class="ind-value">--</span></div>
           <div class="indicator-item"><span class="ind-label">Fear&Greed</span><span id="sig-feargreed-${inst.key}" class="ind-value">--</span></div>
+        </div>
+        <div class="indicators-row" style="margin-top:4px;">
           <div class="indicator-item"><span class="ind-label">CoinGecko</span><span id="sig-coingecko-${inst.key}" class="ind-value">--</span></div>
+          <div class="indicator-item"><span class="ind-label">Binance L/S</span><span id="sig-btcls-${inst.key}" class="ind-value">--</span></div>
         </div>
         <div class="indicators-row" style="margin-top:4px;">
           <div class="indicator-item"><span class="ind-label">ADX</span><span id="adx-${inst.key}" class="ind-value">--</span></div>
