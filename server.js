@@ -589,6 +589,25 @@ async function init() {
 init();
 
 // ===== API =====
+app.get('/api/debug', async (req, res) => {
+  const results = {};
+  for (const base of ['https://api.binance.com', DEMO_API, 'https://api.coingecko.com']) {
+    try {
+      const start = Date.now();
+      const r = await fetch(base + '/api/v3/ticker/price?symbol=BTCUSDT');
+      results[base] = { status: r.status, ms: Date.now() - start };
+    } catch (e) { results[base] = { error: e.message }; }
+  }
+  // Test CoinGecko
+  try {
+    const start = Date.now();
+    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
+    const j = await r.json();
+    results['coingecko'] = { status: r.status, ms: Date.now() - start, price: j.bitcoin?.usd };
+  } catch (e) { results['coingecko'] = { error: e.message }; }
+  res.json(results);
+});
+
 app.get('/api/state', (req, res) => {
   res.json({ portfolio, topCoins, instruments, telegramConfig: { enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId } });
 });
