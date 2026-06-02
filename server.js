@@ -249,6 +249,8 @@ let portfolio = {
   balance: INITIAL_BALANCE,
   initialBalance: INITIAL_BALANCE,
   totalPL: 0,
+  unrealizedPL: 0,
+  totalEquity: INITIAL_BALANCE,
   winCount: 0,
   lossCount: 0,
   tradeCount: 0
@@ -449,7 +451,22 @@ function checkPositions() {
 }
 
 // ===== BROADCAST =====
+function calcUnrealizedPL() {
+  let pl = 0;
+  for (const coin of topCoins) {
+    const pos = instruments[coin]?.position;
+    if (!pos) continue;
+    const price = instruments[coin].price;
+    if (!price) continue;
+    if (pos.side === 'BUY') pl += (price - pos.entryPrice) * pos.qty;
+    else pl += (pos.entryPrice - price) * pos.qty;
+  }
+  return parseFloat(pl.toFixed(2));
+}
+
 function broadcastState() {
+  portfolio.unrealizedPL = calcUnrealizedPL();
+  portfolio.totalEquity = parseFloat((portfolio.initialBalance + portfolio.totalPL + portfolio.unrealizedPL).toFixed(2));
   const data = JSON.stringify({
     portfolio, topCoins, instruments,
     telegramConfig: { enabled: telegramConfig.enabled, hasBotToken: !!telegramConfig.botToken, hasChatId: !!telegramConfig.chatId }
@@ -591,7 +608,7 @@ app.post('/api/binance-config', (req, res) => {
 });
 
 app.post('/api/reset', (req, res) => {
-  portfolio = { balance: INITIAL_BALANCE, totalPL: 0, winCount: 0, lossCount: 0, tradeCount: 0 };
+  portfolio = { balance: INITIAL_BALANCE, totalPL: 0, unrealizedPL: 0, totalEquity: INITIAL_BALANCE, winCount: 0, lossCount: 0, tradeCount: 0 };
   for (const coin of topCoins) {
     instruments[coin] = createInst(coin);
   }

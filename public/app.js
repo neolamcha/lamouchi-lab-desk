@@ -51,8 +51,12 @@ function buildPortfolio(data) {
   const total = p.winCount + p.lossCount;
   const wr = total > 0 ? ((p.winCount / total) * 100).toFixed(1) : 0;
   setText('pf-balance', '$' + p.balance.toFixed(2));
-  setText('pf-pl', (p.totalPL >= 0 ? '+' : '') + '$' + p.totalPL.toFixed(2));
-  setColor('pf-pl', p.totalPL >= 0 ? 'var(--green)' : 'var(--red)');
+  const totalPnL = p.totalPL + (p.unrealizedPL || 0);
+  setText('pf-pl', (totalPnL >= 0 ? '+' : '') + '$' + totalPnL.toFixed(2));
+  setColor('pf-pl', totalPnL >= 0 ? 'var(--green)' : 'var(--red)');
+  const fpText = (p.unrealizedPL >= 0 ? '+' : '') + '$' + (p.unrealizedPL || 0).toFixed(2);
+  const fpEl = document.getElementById('pf-floating');
+  if (fpEl) { fpEl.textContent = 'Floating: ' + fpText; fpEl.style.color = p.unrealizedPL >= 0 ? 'var(--green)' : 'var(--red)'; }
   setText('pf-wr', wr + '%');
   setText('pf-trades', p.tradeCount);
 }
