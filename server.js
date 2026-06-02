@@ -75,8 +75,8 @@ async function apiFetch(path) {
 
 // 3. DOM — Order Book Depth Imbalance
 async function fetchDOMSignal(coin) {
-  const d = await apiFetch(`/api/v3/depth?symbol=${coin}USDT&limit=20`);
-    const d = await res.json();
+  try {
+    const d = await apiFetch(`/api/v3/depth?symbol=${coin}USDT&limit=20`);
     if (!d || !d.bids || !d.asks) return 'NEUTRAL';
     const bidVol = d.bids.reduce((a, b) => a + parseFloat(b[0]) * parseFloat(b[1]), 0);
     const askVol = d.asks.reduce((a, b) => a + parseFloat(b[0]) * parseFloat(b[1]), 0);
@@ -90,8 +90,9 @@ async function fetchDOMSignal(coin) {
 
 // 4. Order Flow — Trade aggressor analysis
 async function fetchOrderFlowSignal(coin) {
-  const trades = await apiFetch(`/api/v3/trades?symbol=${coin}USDT&limit=100`);
-  if (!trades || !trades.length) return 'NEUTRAL';
+  try {
+    const trades = await apiFetch(`/api/v3/trades?symbol=${coin}USDT&limit=100`);
+    if (!trades || !trades.length) return 'NEUTRAL';
     const buyVol = trades.filter(t => !t.isBuyerMaker).reduce((a, t) => a + parseFloat(t.qty), 0);
     const sellVol = trades.filter(t => t.isBuyerMaker).reduce((a, t) => a + parseFloat(t.qty), 0);
     if (sellVol === 0) return buyVol > 0 ? 'BUY' : 'NEUTRAL';
@@ -104,8 +105,9 @@ async function fetchOrderFlowSignal(coin) {
 
 // 5. VWAP
 async function fetchVWAPSignal(coin) {
-  const klines = await apiFetch(`/api/v3/klines?symbol=${coin}USDT&interval=1h&limit=24`);
-  if (!klines || !klines.length) return 'NEUTRAL';
+  try {
+    const klines = await apiFetch(`/api/v3/klines?symbol=${coin}USDT&interval=1h&limit=24`);
+    if (!klines || !klines.length) return 'NEUTRAL';
     let volSum = 0, pvSum = 0;
     for (const k of klines) {
       const high = parseFloat(k[2]), low = parseFloat(k[3]), close = parseFloat(k[4]), vol = parseFloat(k[5]);
