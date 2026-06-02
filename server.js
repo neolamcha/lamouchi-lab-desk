@@ -216,6 +216,7 @@ let totalPL = 0;
 
 let portfolio = {
   balance: INITIAL_BALANCE,
+  initialBalance: INITIAL_BALANCE,
   totalPL: 0,
   winCount: 0,
   lossCount: 0,
@@ -373,7 +374,7 @@ async function closePosition(coin, reason) {
   pos.closedAt = new Date().toISOString();
 
   portfolio.totalPL = parseFloat((portfolio.totalPL + plDollars).toFixed(2));
-  portfolio.balance = parseFloat((INITIAL_BALANCE + portfolio.totalPL).toFixed(2));
+  portfolio.balance = parseFloat((portfolio.initialBalance + portfolio.totalPL).toFixed(2));
   if (pos.status === 'WIN') portfolio.winCount++;
   else portfolio.lossCount++;
 
@@ -446,17 +447,14 @@ async function init() {
   }
   loadKeys();
 
-  // Sync real demo balance every 30s (first sync after 5s)
+  // Snapshot initial demo balance — bot tracks own PnL from there
   setTimeout(async () => {
     const bal = await demoBalance();
-    if (bal != null) portfolio.balance = parseFloat(bal.toFixed(2));
-  }, 5000);
-  setInterval(async () => {
-    const bal = await demoBalance();
     if (bal != null) {
-      portfolio.balance = parseFloat(bal.toFixed(2));
+      portfolio.initialBalance = parseFloat(bal.toFixed(2));
+      portfolio.balance = portfolio.initialBalance;
     }
-  }, 30000);
+  }, 5000);
 
   // Price loop
   setInterval(async () => {

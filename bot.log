@@ -75,3 +75,20 @@
 [TopCoins] BTC, ETH, BNB, XRP, SOL, TRX, HYPE, DOGE, ADA, XLM, PAXG
 [Demo] Clés chargées depuis fichier
 [Init] First signal poll complete
+================================================================
+   LAMOUCHI LAB DESK v2 — Quant Bot
+   http://localhost:3000
+   Balance: $200 | Risque: $15/trade | Top 10 + PAXG | SCALP 0.8/1.5 ATR
+   Signaux: TradingView + Fear&Greed + DOM + OrderFlow + VWAP
+   Notifications: Telegram
+================================================================
+[TopCoins] BTC, ETH, BNB, XRP, SOL, TRX, HYPE, DOGE, ADA, XLM, PAXG
+[Demo] Clés chargées depuis fichier
+[TRADE] BUY ETH @ 1895.4 x0.989 | SL: 1880.24 TP: 1923.83
+[TRADE] SELL BNB @ 655.73 x2.859 | SL: 660.98 TP: 645.89
+[TRADE] BUY SOL @ 75.29 x24.9 | SL: 74.69 TP: 76.42
+[TRADE] SELL PAXG @ 4486.87 x0.417 | SL: 4522.76 TP: 4419.57
+[Init] First signal poll complete
+[TRADE] BUY BTC @ 66727.8 x0.028 | SL: 66193.98 TP: 67728.72
+[Scalp] All instruments polled (60s)
+[CLOSE] SOL BUY @ 74.62 | PnL: $-16.68 | SL
