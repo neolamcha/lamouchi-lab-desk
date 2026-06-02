@@ -200,21 +200,7 @@ async function binanceRequest(endpoint, params = {}, baseUrl = DEMO_API) {
   };
   async function fetchAllPrices() {
     const prices = {};
-    // 1. Coinbase (parallel, most reliable)
-    const cbResults = await Promise.allSettled(
-      Object.entries(COINBASE_IDS).map(([coin, cbId]) =>
-        fetch('https://api.coinbase.com/v2/prices/' + cbId + '-USD/spot')
-          .then(r => r.json())
-          .then(j => ({ coin, price: parseFloat(j?.data?.amount) }))
-      )
-    );
-    for (const r of cbResults) {
-      if (r.status === 'fulfilled' && r.value && !isNaN(r.value.price) && r.value.price > 0)
-        prices[r.value.coin] = r.value.price;
-    }
-    if (Object.keys(prices).length >= 8) return prices;
-
-    // 2. Binance fallback
+    // 1. Binance (primary - fast, accurate, works locally)
     for (const base of ['https://api.binance.com', DEMO_API]) {
       try {
         const params = new URLSearchParams();
@@ -233,6 +219,20 @@ async function binanceRequest(endpoint, params = {}, baseUrl = DEMO_API) {
         }
       } catch {}
     }
+
+    // 2. Coinbase fallback (works on Render)
+    const cbResults = await Promise.allSettled(
+      Object.entries(COINBASE_IDS).map(([coin, cbId]) =>
+        fetch('https://api.coinbase.com/v2/prices/' + cbId + '-USD/spot')
+          .then(r => r.json())
+          .then(j => ({ coin, price: parseFloat(j?.data?.amount) }))
+      )
+    );
+    for (const r of cbResults) {
+      if (r.status === 'fulfilled' && r.value && !isNaN(r.value.price) && r.value.price > 0)
+        prices[r.value.coin] = r.value.price;
+    }
+    if (Object.keys(prices).length >= 8) return prices;
 
     // 3. Try missing coins on other exchanges
     for (const coin of Object.keys(COINBASE_IDS)) {
