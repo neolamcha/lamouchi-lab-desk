@@ -190,7 +190,8 @@ async function binanceRequest(endpoint, params = {}, baseUrl = DEMO_API) {
   const url = `${baseUrl}${endpoint}?${qs}&signature=${sig}`;
   const res = await fetch(url, { headers: { 'X-MBX-APIKEY': demoApiKey } });
   const txt = await res.text();
-  return JSON.parse(txt);
+  try { return JSON.parse(txt); }
+  catch { return { msg: 'Parse error: ' + txt.substring(0, 100) }; }
 }
 
   const COINBASE_IDS = {
@@ -379,25 +380,39 @@ function computeSLTP(price, side, atr) {
   return { sl: price + slDist, tp: price - tpDist };
 }
 
-function calcSize(price, sl, side) {
+const STEP_SIZES = {
+  BTC: 0.00001, ETH: 0.0001, BNB: 0.001, XRP: 0.1, SOL: 0.001,
+  ADA: 0.1, DOGE: 1, AVAX: 0.01, DOT: 0.01, LINK: 0.01,
+  PAXG: 0.0001, XLM: 1, TRX: 1, HYPE: 0.01
+};
+
+function calcSize(coin, price, sl) {
   const riskPerUnit = Math.abs(price - sl);
   if (riskPerUnit < 0.01) return 0;
   let qty = RISK_PER_TRADE / riskPerUnit;
-  const prec = price > 100 ? 3 : price > 1 ? 2 : 1;
-  qty = Math.floor(qty * (10 ** prec)) / (10 ** prec);
+  const step = STEP_SIZES[coin] || 0.001;
+  qty = Math.floor(qty / step) * step;
   return Math.max(qty, 0.001);
 }
 
 // ===== TRADE EXECUTION =====
 async function binanceOrder(coin, side, qty) {
-  if (!demoApiKey || !demoApiSecret) return null;
-  for (const base of ['https://api.binance.com', DEMO_API]) {
+  if (!demoApiKey || !demoApiSecret) {
+    console.warn('[Order] No API keys loaded');
+    return null;
+  }
+  // Demo API first (keys are for Demo), production fallback
+  for (const base of [DEMO_API, 'https://api.binance.com']) {
     try {
       const data = await binanceRequest('/api/v3/order', {
         symbol: `${coin}USDT`, side, type: 'MARKET', quantity: qty
       }, base);
-      if (data && data.orderId) return data;
-    } catch {}
+      if (data && data.orderId) {
+        console.log(`[Order] ${side} ${coin} x${qty} | #${data.orderId} | ${base}`);
+        return data;
+      }
+      if (data && data.msg) console.warn(`[Order] ${base}:`, data.msg);
+    } catch (e) { console.warn(`[Order] ${base}:`, e.message); }
   }
   return null;
 }
@@ -409,7 +424,7 @@ async function executeTrade(coin, side) {
   const price = inst.price;
   const atr = inst.priceHistory.length > 14 ? calcRSI(inst.priceHistory) * price * 0.002 : price * 0.01;
   const { sl, tp } = computeSLTP(price, side, atr);
-  const qty = calcSize(price, sl, side);
+  const qty = calcSize(coin, price, sl);
   if (qty <= 0) return;
 
   // Place real market order on Binance
