@@ -58,46 +58,61 @@ async function fetchTradingView(coin) {
   } catch { return 'NEUTRAL'; }
 }
 
-// 3. Internal RSI
-function calcRSI(data, period = 14) {
-  if (data.length < period + 1) return 50;
-  const closes = data.slice(-period - 1);
-  let gains = 0, losses = 0;
-  for (let i = 1; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1];
-    if (diff > 0) gains += diff;
-    else losses -= diff;
-  }
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
-  if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return 100 - (100 / (1 + rs));
+// 3. DOM — Order Book Depth Imbalance
+async function fetchDOMSignal(coin) {
+  try {
+    const res = await fetch(`${DEMO_API}/api/v3/depth?symbol=${coin}USDT&limit=20`);
+    const d = await res.json();
+    if (!d.bids || !d.asks) return 'NEUTRAL';
+    const bidVol = d.bids.reduce((a, b) => a + parseFloat(b[0]) * parseFloat(b[1]), 0);
+    const askVol = d.asks.reduce((a, b) => a + parseFloat(b[0]) * parseFloat(b[1]), 0);
+    if (bidVol === 0 || askVol === 0) return 'NEUTRAL';
+    const ratio = bidVol / askVol;
+    if (ratio > 1.3) return 'BUY';
+    if (ratio < 0.7) return 'SELL';
+    return 'NEUTRAL';
+  } catch { return 'NEUTRAL'; }
 }
 
-function rsiSignal(rsi) {
-  if (rsi <= 35) return 'BUY';
-  if (rsi >= 65) return 'SELL';
-  return 'NEUTRAL';
+// 4. Order Flow — Trade aggressor analysis
+async function fetchOrderFlowSignal(coin) {
+  try {
+    const res = await fetch(`${DEMO_API}/api/v3/trades?symbol=${coin}USDT&limit=100`);
+    const trades = await res.json();
+    if (!trades.length) return 'NEUTRAL';
+    const buyVol = trades.filter(t => !t.isBuyerMaker).reduce((a, t) => a + parseFloat(t.qty), 0);
+    const sellVol = trades.filter(t => t.isBuyerMaker).reduce((a, t) => a + parseFloat(t.qty), 0);
+    if (sellVol === 0) return buyVol > 0 ? 'BUY' : 'NEUTRAL';
+    const ratio = buyVol / sellVol;
+    if (ratio > 1.2) return 'BUY';
+    if (ratio < 0.8) return 'SELL';
+    return 'NEUTRAL';
+  } catch { return 'NEUTRAL'; }
 }
 
-// 4. Internal EMA trend
-function calcEMA(data, period) {
-  if (data.length < period) return null;
-  const k = 2 / (period + 1);
-  let ema = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  for (let i = period; i < data.length; i++) {
-    ema = data[i] * k + ema * (1 - k);
-  }
-  return ema;
-}
-
-function trendSignal(price, ema) {
-  if (ema == null) return 'NEUTRAL';
-  const pct = (price - ema) / ema;
-  if (pct > 0.01) return 'BUY';
-  if (pct < -0.01) return 'SELL';
-  return 'NEUTRAL';
+// 5. VWAP
+async function fetchVWAPSignal(coin) {
+  try {
+    const res = await fetch(`${DEMO_API}/api/v3/klines?symbol=${coin}USDT&interval=1h&limit=24`);
+    const klines = await res.json();
+    if (!klines.length) return 'NEUTRAL';
+    let volSum = 0, pvSum = 0;
+    for (const k of klines) {
+      const high = parseFloat(k[2]), low = parseFloat(k[3]), close = parseFloat(k[4]), vol = parseFloat(k[5]);
+      const typPrice = (high + low + close) / 3;
+      volSum += vol;
+      pvSum += typPrice * vol;
+    }
+    const vwap = pvSum / volSum;
+    const priceRes = await fetch(`${DEMO_API}/api/v3/ticker/price?symbol=${coin}USDT`);
+    const priceJson = await priceRes.json();
+    const price = parseFloat(priceJson.price);
+    if (!price || !vwap) return 'NEUTRAL';
+    const dev = (price - vwap) / vwap;
+    if (dev > 0.005) return 'BUY';
+    if (dev < -0.005) return 'SELL';
+    return 'NEUTRAL';
+  } catch { return 'NEUTRAL'; }
 }
 
 // ===== TOP 10 FETCHER ====
@@ -135,13 +150,31 @@ async function refreshTop10() {
 }
 
 // ===== BINANCE DEMO API =====
+const fs = require('fs');
 const DEMO_API = 'https://demo-api.binance.com';
+const KEY_FILE = path.join(__dirname, '.demo-keys.json');
 let demoApiKey = '';
 let demoApiSecret = '';
+
+function loadKeys() {
+  try {
+    const data = JSON.parse(fs.readFileSync(KEY_FILE, 'utf8'));
+    demoApiKey = data.apiKey || '';
+    demoApiSecret = data.apiSecret || '';
+    if (demoApiKey) console.log('[Demo] Clés chargées depuis fichier');
+  } catch {}
+}
+
+function saveKeys(apiKey, apiSecret) {
+  try {
+    fs.writeFileSync(KEY_FILE, JSON.stringify({ apiKey, apiSecret }));
+  } catch (e) { console.warn('[Demo] Erreur sauvegarde clés:', e.message); }
+}
 
 function initDemoAPI(apiKey, apiSecret) {
   demoApiKey = apiKey || '';
   demoApiSecret = apiSecret || '';
+  if (apiKey && apiSecret) saveKeys(apiKey, apiSecret);
   return true;
 }
 
@@ -189,6 +222,10 @@ let portfolio = {
 
 let instruments = {};
 
+function defaultSources() {
+  return { tradingview: 'NEUTRAL', feargreed: 'NEUTRAL', dom: 'NEUTRAL', orderflow: 'NEUTRAL', vwap: 'NEUTRAL' };
+}
+
 function createInst(coin) {
   const nameMap = {
     BTC: 'Bitcoin', ETH: 'Ethereum', BNB: 'BNB', XRP: 'XRP',
@@ -198,7 +235,7 @@ function createInst(coin) {
   return {
     coin, name: nameMap[coin] || coin,
     price: 0, priceHistory: [],
-    sources: { tradingview: 'NEUTRAL', feargreed: 'NEUTRAL', rsi: 'NEUTRAL', trend: 'NEUTRAL' },
+    sources: defaultSources(),
     confluence: 'NEUTRAL', confluenceScore: 0,
     position: null,
     history: [],
@@ -207,7 +244,7 @@ function createInst(coin) {
 }
 
 function calcConfluence(inst) {
-  const weights = { tradingview: 1.2, feargreed: 1.0, rsi: 1.0, trend: 1.0 };
+  const weights = { tradingview: 1.2, feargreed: 1.0, dom: 1.0, orderflow: 1.0, vwap: 1.0 };
   let score = 0, maxP = 0;
   for (const [k, w] of Object.entries(weights)) {
     maxP += w;
@@ -215,7 +252,7 @@ function calcConfluence(inst) {
     else if (inst.sources[k] === 'SELL') score -= w;
   }
   inst.confluenceScore = parseFloat(score.toFixed(2));
-  const threshold = maxP * 0.35;
+  const threshold = maxP * 0.3;
   let conf = 'NEUTRAL';
   if (score >= threshold) conf = 'BUY';
   else if (score <= -threshold) conf = 'SELL';
@@ -230,19 +267,20 @@ async function pollSignals(coin) {
   const inst = instruments[coin];
   if (!inst || inst.price <= 0) return;
 
-  const [tvSig, fgSig] = await Promise.all([
+  const [tvSig, fgSig, domSig, ofSig, vwapSig] = await Promise.all([
     fetchTradingView(coin),
-    fetchFearGreed()
+    fetchFearGreed(),
+    fetchDOMSignal(coin),
+    fetchOrderFlowSignal(coin),
+    fetchVWAPSignal(coin)
   ]);
-
-  const rsiVal = calcRSI(inst.priceHistory);
-  const ema20 = calcEMA(inst.priceHistory, 20);
 
   inst.sources = {
     tradingview: tvSig,
     feargreed: fgSig,
-    rsi: rsiSignal(rsiVal),
-    trend: trendSignal(inst.price, ema20)
+    dom: domSig,
+    orderflow: ofSig,
+    vwap: vwapSig
   };
 
   const signal = calcConfluence(inst);
@@ -385,9 +423,13 @@ async function init() {
   for (const coin of topCoins) {
     instruments[coin] = createInst(coin);
   }
-  initDemoAPI();
+  loadKeys();
 
-  // Sync real demo balance every 30s
+  // Sync real demo balance every 30s (first sync after 5s)
+  setTimeout(async () => {
+    const bal = await demoBalance();
+    if (bal != null) portfolio.balance = parseFloat(bal.toFixed(2));
+  }, 5000);
   setInterval(async () => {
     const bal = await demoBalance();
     if (bal != null) {
@@ -494,7 +536,7 @@ app.listen(PORT, () => {
   console.log(`   LAMOUCHI LAB DESK v2 — Quant Bot`);
   console.log(`   http://localhost:${PORT}`);
   console.log(`   Balance: $${INITIAL_BALANCE} | Risque: $${RISK_PER_TRADE}/trade | Top 10 + PAXG`);
-  console.log(`   Signaux: TradingView + Fear&Greed + RSI + EMA`);
+   console.log(`   Signaux: TradingView + Fear&Greed + DOM + OrderFlow + VWAP`);
   console.log(`   Notifications: Telegram`);
   console.log(`================================================================`);
 });

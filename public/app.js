@@ -31,8 +31,9 @@
 const sourceMeta = [
   { key: 'tradingview', label: 'TradingView' },
   { key: 'feargreed', label: 'Fear&Greed' },
-  { key: 'rsi', label: 'RSI' },
-  { key: 'trend', label: 'EMA Trend' }
+  { key: 'dom', label: 'DOM' },
+  { key: 'orderflow', label: 'OrderFlow' },
+  { key: 'vwap', label: 'VWAP' }
 ];
 
 function setText(id, val) {
