@@ -1,0 +1,14 @@
+{
+  "name": "nasdaq-confluence-dashboard",
+  "version": "1.0.0",
+  "description": "Tableau de Bord de Confluence de Signaux NASDAQ pour Topstep",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "nodemailer": "^8.0.10"
+  }
+}
