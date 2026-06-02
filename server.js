@@ -8,7 +8,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
-const INITIAL_BALANCE = 200;
+const INITIAL_BALANCE = 5000;
 const RISK_PER_TRADE = 15;
 const SIGNAL_POLL_MS = 60000;
 const PRICE_POLL_MS = 5000;
@@ -181,13 +181,13 @@ function initDemoAPI(apiKey, apiSecret) {
   return true;
 }
 
-async function binanceRequest(endpoint, params = {}) {
+async function binanceRequest(endpoint, params = {}, baseUrl = DEMO_API) {
   const ts = Date.now();
   const allParams = { ...params, timestamp: ts, recvWindow: 10000 };
   const qs = Object.entries(allParams).map(([k, v]) => `${k}=${v}`).join('&');
   const crypto = require('crypto');
   const sig = crypto.createHmac('sha256', demoApiSecret).update(qs).digest('hex');
-  const url = `${DEMO_API}${endpoint}?${qs}&signature=${sig}`;
+  const url = `${baseUrl}${endpoint}?${qs}&signature=${sig}`;
   const res = await fetch(url, { headers: { 'X-MBX-APIKEY': demoApiKey } });
   const txt = await res.text();
   return JSON.parse(txt);
@@ -231,11 +231,14 @@ async function binanceRequest(endpoint, params = {}) {
 
 async function demoBalance() {
   if (!demoApiKey || !demoApiSecret) return null;
-  try {
-    const data = await binanceRequest('/api/v3/account');
-    const usdt = data.balances?.find(b => b.asset === 'USDT');
-    return usdt ? parseFloat(usdt.free) : 0;
-  } catch { return null; }
+  for (const base of ['https://api.binance.com', DEMO_API]) {
+    try {
+      const data = await binanceRequest('/api/v3/account', {}, base);
+      const usdt = data.balances?.find(b => b.asset === 'USDT');
+      if (usdt && parseFloat(usdt.free) > 0) return parseFloat(usdt.free);
+    } catch {}
+  }
+  return null;
 }
 
 // ===== STATE =====
