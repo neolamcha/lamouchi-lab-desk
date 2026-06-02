@@ -198,31 +198,35 @@ async function binanceRequest(endpoint, params = {}) {
     SOL: 'solana', ADA: 'cardano', DOGE: 'dogecoin', AVAX: 'avalanche-2',
     DOT: 'polkadot', LINK: 'chainlink', PAXG: 'pax-gold'
   };
+  const CG_NAMES = Object.values(CG_IDS).join(',');
 
-  async function fetchPrice(coin) {
-    // Try CoinGecko first (works from Render)
-    const cgId = CG_IDS[coin];
-    if (cgId) {
-      try {
-        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cgId}&vs_currencies=usd`);
-        if (res.status === 200) {
-          const json = await res.json();
-          const p = parseFloat(json[cgId]?.usd);
-          if (!isNaN(p) && p > 0) return p;
-        }
-      } catch {}
-    }
-    // Fallback: Binance (production, then demo)
-    for (const base of ['https://api.binance.com', DEMO_API]) {
-      try {
-        const res = await fetch(`${base}/api/v3/ticker/price?symbol=${coin}USDT`);
-        if (res.status !== 200) continue;
+  async function fetchAllPrices() {
+    const prices = {};
+    // CoinGecko batch (1 call for all coins)
+    try {
+      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${CG_NAMES}&vs_currencies=usd`);
+      if (res.status === 200) {
         const json = await res.json();
-        const p = parseFloat(json.price);
-        if (!isNaN(p) && p > 0) return p;
-      } catch {}
+        for (const [sym, id] of Object.entries(CG_IDS)) {
+          const p = parseFloat(json[id]?.usd);
+          if (!isNaN(p) && p > 0) prices[sym] = p;
+        }
+      }
+    } catch {}
+    // Fallback for missing coins: try Binance individually
+    for (const [sym, id] of Object.entries(CG_IDS)) {
+      if (prices[sym]) continue;
+      for (const base of ['https://api.binance.com', DEMO_API]) {
+        try {
+          const res = await fetch(`${base}/api/v3/ticker/price?symbol=${sym}USDT`);
+          if (res.status !== 200) continue;
+          const json = await res.json();
+          const p = parseFloat(json.price);
+          if (!isNaN(p) && p > 0) { prices[sym] = p; break; }
+        } catch {}
+      }
     }
-    return null;
+    return prices;
   }
 
 async function demoBalance() {
@@ -532,8 +536,9 @@ async function init() {
 
   // Price loop
   setInterval(async () => {
+    const prices = await fetchAllPrices();
     for (const coin of topCoins) {
-      const price = await fetchPrice(coin);
+      const price = prices[coin];
       if (price) {
         const inst = instruments[coin];
         inst.price = price;
