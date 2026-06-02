@@ -196,7 +196,7 @@ async function binanceRequest(endpoint, params = {}, baseUrl = DEMO_API) {
   const COINBASE_IDS = {
     BTC: 'BTC', ETH: 'ETH', BNB: 'BNB', XRP: 'XRP', SOL: 'SOL',
     ADA: 'ADA', DOGE: 'DOGE', AVAX: 'AVAX', DOT: 'DOT', LINK: 'LINK',
-    PAXG: 'PAXG'
+    PAXG: 'PAXG', XLM: 'XLM', TRX: 'TRX', HYPE: 'HYPE'
   };
   async function fetchAllPrices() {
     const prices = {};
@@ -234,16 +234,23 @@ async function binanceRequest(endpoint, params = {}, baseUrl = DEMO_API) {
       } catch {}
     }
 
-    // 3. Kraken/others individual fallback
-    const kraken = { BTC: 'XBTUSDT', ETH: 'ETHUSDT' };
-    for (const [coin, pair] of Object.entries(kraken)) {
+    // 3. Try missing coins on other exchanges
+    for (const coin of Object.keys(COINBASE_IDS)) {
       if (prices[coin]) continue;
-      try {
-        const r = await fetch('https://api.kraken.com/0/public/Ticker?pair=' + pair);
-        const j = await r.json();
-        const last = parseFloat(j?.result?.[pair]?.c?.[0]);
-        if (!isNaN(last) && last > 0) prices[coin] = last;
-      } catch {}
+      for (const url of [
+        'https://api.kraken.com/0/public/Ticker?pair=' + (coin === 'BTC' ? 'XBTUSDT' : coin + 'USDT'),
+        'https://www.bitstamp.net/api/v2/ticker/' + coin.toLowerCase() + 'usd/'
+      ]) {
+        try {
+          const r = await fetch(url);
+          if (r.status !== 200) continue;
+          const j = await r.json();
+          let last = j?.result?.[url.includes('kraken') ? Object.keys(j.result||{})[0] : '']?.c?.[0];
+          if (!last) last = j?.last || j?.price;
+          const p = parseFloat(last);
+          if (!isNaN(p) && p > 0) { prices[coin] = p; break; }
+        } catch {}
+      }
     }
     return prices;
   }
