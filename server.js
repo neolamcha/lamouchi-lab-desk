@@ -193,22 +193,37 @@ async function binanceRequest(endpoint, params = {}) {
   return JSON.parse(txt);
 }
 
- async function fetchPrice(coin) {
-   const urls = [
-     `https://api.binance.com/api/v3/ticker/price?symbol=${coin}USDT`,
-     `${DEMO_API}/api/v3/ticker/price?symbol=${coin}USDT`
-   ];
-   for (const url of urls) {
-     try {
-       const res = await fetch(url);
-       if (res.status !== 200) continue;
-       const json = await res.json();
-       const p = parseFloat(json.price);
-       if (!isNaN(p) && p > 0) return p;
-     } catch {}
-   }
-   return null;
- }
+  const CG_IDS = {
+    BTC: 'bitcoin', ETH: 'ethereum', BNB: 'binancecoin', XRP: 'ripple',
+    SOL: 'solana', ADA: 'cardano', DOGE: 'dogecoin', AVAX: 'avalanche-2',
+    DOT: 'polkadot', LINK: 'chainlink', PAXG: 'pax-gold'
+  };
+
+  async function fetchPrice(coin) {
+    // Try CoinGecko first (works from Render)
+    const cgId = CG_IDS[coin];
+    if (cgId) {
+      try {
+        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cgId}&vs_currencies=usd`);
+        if (res.status === 200) {
+          const json = await res.json();
+          const p = parseFloat(json[cgId]?.usd);
+          if (!isNaN(p) && p > 0) return p;
+        }
+      } catch {}
+    }
+    // Fallback: Binance (production, then demo)
+    for (const base of ['https://api.binance.com', DEMO_API]) {
+      try {
+        const res = await fetch(`${base}/api/v3/ticker/price?symbol=${coin}USDT`);
+        if (res.status !== 200) continue;
+        const json = await res.json();
+        const p = parseFloat(json.price);
+        if (!isNaN(p) && p > 0) return p;
+      } catch {}
+    }
+    return null;
+  }
 
 async function demoBalance() {
   if (!demoApiKey || !demoApiSecret) return null;
