@@ -363,6 +363,19 @@ function calcSize(price, sl, side) {
 }
 
 // ===== TRADE EXECUTION =====
+async function binanceOrder(coin, side, qty) {
+  if (!demoApiKey || !demoApiSecret) return null;
+  for (const base of ['https://api.binance.com', DEMO_API]) {
+    try {
+      const data = await binanceRequest('/api/v3/order', {
+        symbol: `${coin}USDT`, side, type: 'MARKET', quantity: qty
+      }, base);
+      if (data && data.orderId) return data;
+    } catch {}
+  }
+  return null;
+}
+
 async function executeTrade(coin, side) {
   const inst = instruments[coin];
   if (inst.position) return;
@@ -373,8 +386,18 @@ async function executeTrade(coin, side) {
   const qty = calcSize(price, sl, side);
   if (qty <= 0) return;
 
+  // Place real market order on Binance
+  const binanceSide = side === 'BUY' ? 'BUY' : 'SELL';
+  const order = await binanceOrder(coin, binanceSide, qty);
+  if (!order) {
+    console.warn(`[TRADE] ${side} ${coin} @ ${price} - FAILED (Binance API unreachable) - PAPER MODE`);
+    // Fall back to paper mode if API unreachable
+  } else {
+    console.log(`[TRADE] ${side} ${coin} @ ${price} x${qty} | Binance order #${order.orderId}`);
+  }
+
   const pos = {
-    id: Date.now().toString(),
+    id: (order?.orderId || Date.now()).toString(),
     coin, side, entryPrice: price, qty, sl, tp,
     status: 'ACTIVE', exitPrice: null, pl: null,
     openedAt: new Date().toISOString()
@@ -397,6 +420,14 @@ async function closePosition(coin, reason) {
   if (!inst.position) return;
 
   const pos = inst.position;
+
+  // Close real position on Binance
+  const binanceSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
+  const order = await binanceOrder(coin, binanceSide, pos.qty);
+  if (order) {
+    console.log(`[CLOSE] ${coin} ${pos.side} close order #${order.orderId}`);
+  }
+
   const exitPrice = inst.price;
   const isLong = pos.side === 'BUY';
   const plPct = isLong ? ((exitPrice - pos.entryPrice) / pos.entryPrice) : ((pos.entryPrice - exitPrice) / pos.entryPrice);
