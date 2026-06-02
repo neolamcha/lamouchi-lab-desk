@@ -531,12 +531,12 @@ async function init() {
   if (hasDB) {
     const savedPortfolio = await db.loadPortfolio();
     if (savedPortfolio) {
-      portfolio.balance = savedPortfolio.balance;
-      portfolio.initialBalance = savedPortfolio.initialBalance;
-      portfolio.totalPL = savedPortfolio.totalPL;
-      portfolio.winCount = savedPortfolio.winCount;
-      portfolio.lossCount = savedPortfolio.lossCount;
-      portfolio.tradeCount = savedPortfolio.tradeCount;
+      portfolio.balance = savedPortfolio.balance ?? INITIAL_BALANCE;
+      portfolio.initialBalance = savedPortfolio.initialBalance ?? INITIAL_BALANCE;
+      portfolio.totalPL = savedPortfolio.totalPL ?? 0;
+      portfolio.winCount = savedPortfolio.winCount ?? 0;
+      portfolio.lossCount = savedPortfolio.lossCount ?? 0;
+      portfolio.tradeCount = savedPortfolio.tradeCount ?? 0;
       console.log('[DB] Portfolio restored');
     }
     const savedTelegram = await db.loadTelegram();
@@ -639,7 +639,7 @@ app.post('/api/binance-config', (req, res) => {
 });
 
 app.post('/api/reset', (req, res) => {
-  portfolio = { balance: INITIAL_BALANCE, totalPL: 0, unrealizedPL: 0, totalEquity: INITIAL_BALANCE, winCount: 0, lossCount: 0, tradeCount: 0 };
+  portfolio = { balance: INITIAL_BALANCE, initialBalance: INITIAL_BALANCE, totalPL: 0, unrealizedPL: 0, totalEquity: INITIAL_BALANCE, winCount: 0, lossCount: 0, tradeCount: 0 };
   for (const coin of topCoins) {
     instruments[coin] = createInst(coin);
   }
