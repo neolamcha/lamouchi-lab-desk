@@ -631,8 +631,10 @@ app.get('/api/state', (req, res) => {
 });
 
 app.get('/api/debug', async (req, res) => {
-  const result = { fetchAllPrices: null, error: null };
+  const result = { fetchAllPrices: null, error: null, cgIds: null, cgNames: null };
   try {
+    result.cgIds = CG_IDS;
+    result.cgNames = CG_NAMES;
     result.fetchAllPrices = await fetchAllPrices();
   } catch (e) { result.error = e.message; }
   res.json(result);
