@@ -134,35 +134,44 @@ async function refreshTop10() {
   }
 }
 
-// ===== BINANCE TESTNET =====
-let binance = null;
-let binanceReady = false;
+// ===== BINANCE DEMO API =====
+const DEMO_API = 'https://demo-api.binance.com';
+let demoApiKey = '';
+let demoApiSecret = '';
 
-function initBinance(apiKey, apiSecret) {
-  try {
-    binance = new ccxt.binance({
-      apiKey: apiKey || '',
-      secret: apiSecret || '',
-      options: { defaultType: 'spot' }
-    });
-    binance.setSandboxMode(true);
-    binanceReady = true;
-    return true;
-  } catch (e) { return false; }
+function initDemoAPI(apiKey, apiSecret) {
+  demoApiKey = apiKey || '';
+  demoApiSecret = apiSecret || '';
+  return true;
+}
+
+async function binanceRequest(endpoint, params = {}) {
+  const ts = Date.now();
+  const allParams = { ...params, timestamp: ts, recvWindow: 10000 };
+  const qs = Object.entries(allParams).map(([k, v]) => `${k}=${v}`).join('&');
+  const crypto = require('crypto');
+  const sig = crypto.createHmac('sha256', demoApiSecret).update(qs).digest('hex');
+  const url = `${DEMO_API}${endpoint}?${qs}&signature=${sig}`;
+  const res = await fetch(url, { headers: { 'X-MBX-APIKEY': demoApiKey } });
+  const txt = await res.text();
+  return JSON.parse(txt);
 }
 
 async function fetchPrice(coin) {
-  if (binanceReady && binance) {
-    try {
-      const ticker = await binance.fetchTicker(`${coin}/USDT`);
-      return ticker.last;
-    } catch {}
-  }
   try {
-    const res = await fetch(`https://testnet.binance.vision/api/v3/ticker/price?symbol=${coin}USDT`);
-    if (res.status !== 200) return null;
+    const url = `${DEMO_API}/api/v3/ticker/price?symbol=${coin}USDT`;
+    const res = await fetch(url);
     const json = await res.json();
     return parseFloat(json.price);
+  } catch { return null; }
+}
+
+async function demoBalance() {
+  if (!demoApiKey || !demoApiSecret) return null;
+  try {
+    const data = await binanceRequest('/api/v3/account');
+    const usdt = data.balances?.find(b => b.asset === 'USDT');
+    return usdt ? parseFloat(usdt.free) : 0;
   } catch { return null; }
 }
 
@@ -376,7 +385,15 @@ async function init() {
   for (const coin of topCoins) {
     instruments[coin] = createInst(coin);
   }
-  initBinance();
+  initDemoAPI();
+
+  // Sync real demo balance every 30s
+  setInterval(async () => {
+    const bal = await demoBalance();
+    if (bal != null) {
+      portfolio.balance = parseFloat(bal.toFixed(2));
+    }
+  }, 30000);
 
   // Price loop
   setInterval(async () => {
@@ -425,8 +442,8 @@ app.get('/api/state', (req, res) => {
 app.post('/api/binance-config', (req, res) => {
   const { apiKey, apiSecret } = req.body;
   if (!apiKey || !apiSecret) return res.status(400).json({ error: 'API key et secret requis' });
-  const ok = initBinance(apiKey, apiSecret);
-  res.json({ success: ok, message: ok ? 'Connecté au testnet Binance' : 'Échec connexion' });
+  const ok = initDemoAPI(apiKey, apiSecret);
+  res.json({ success: ok, message: ok ? 'Connecté au Binance Demo' : 'Échec connexion' });
 });
 
 app.post('/api/reset', (req, res) => {
